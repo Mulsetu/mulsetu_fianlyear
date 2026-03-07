@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env*.local
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+*.log
+
+# Build
+*.tsbuildinfo
