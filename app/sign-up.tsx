@@ -4,7 +4,7 @@ import { supabase } from '@/utils/supabaseClient';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Link, router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -23,7 +23,12 @@ import {
 const INSTALL_LINKS = {
   androidApk: 'https://your-domain.com/mulsetu.apk',
   ios: 'https://testflight.apple.com/join/your-invite-code',
-  pwa: 'https://your-vercel-domain.vercel.app',
+  pwa: '/',
+};
+
+type DeferredInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 };
 
 export default function SignUpScreen() {
@@ -43,6 +48,7 @@ export default function SignUpScreen() {
   const [markets, setMarkets] = useState<Array<{ market_name: string; state_name: string }>>([]);
   const [loadingMarkets, setLoadingMarkets] = useState(true);
   const [marketSearch, setMarketSearch] = useState('');
+  const deferredInstallPromptRef = useRef<DeferredInstallPromptEvent | null>(null);
   const [errors, setErrors] = useState<{
     name?: string;
     email?: string;
@@ -61,6 +67,20 @@ export default function SignUpScreen() {
   // Load markets from Supabase
   useEffect(() => {
     loadMarkets();
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      deferredInstallPromptRef.current = event as DeferredInstallPromptEvent;
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt as EventListener);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt as EventListener);
+    };
   }, []);
 
   // Same table as profile: state_market_import, fetched in full (paginated past 1000 rows)
@@ -206,6 +226,21 @@ export default function SignUpScreen() {
   };
 
   const handleOpenInstallLink = async (url: string, label: string) => {
+    if (label === 'PWA/Web' && Platform.OS === 'web') {
+      if (deferredInstallPromptRef.current) {
+        await deferredInstallPromptRef.current.prompt();
+        await deferredInstallPromptRef.current.userChoice;
+        deferredInstallPromptRef.current = null;
+        return;
+      }
+
+      Alert.alert(
+        'Install steps',
+        'If install prompt is not shown: Android Chrome menu > Install app. iPhone Safari share > Add to Home Screen.'
+      );
+      return;
+    }
+
     const isPlaceholder =
       url.includes('your-domain.com') ||
       url.includes('your-invite-code') ||
