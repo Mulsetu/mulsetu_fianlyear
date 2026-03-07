@@ -93,27 +93,36 @@ export default function ProfileScreen() {
     }
   }, [user, isLoading]);
 
-  const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Logout', 
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await logout();
-              router.replace('/sign-in');
-            } catch (error) {
-              console.error('Logout error:', error);
-              Alert.alert('Error', 'Failed to logout. Please try again.');
-            }
-          }
-        },
-      ]
-    );
+  const handleLogout = async () => {
+    const doLogout = async () => {
+      try {
+        await logout();
+        router.replace('/sign-in');
+      } catch (error) {
+        console.error('Logout error:', error);
+        if (Platform.OS === 'web') {
+          window.alert('Failed to logout. Please try again.');
+        } else {
+          Alert.alert('Error', 'Failed to logout. Please try again.');
+        }
+      }
+    };
+
+    // Alert.alert doesn't work on web - use window.confirm instead
+    if (Platform.OS === 'web') {
+      if (window.confirm('Are you sure you want to logout?')) {
+        await doLogout();
+      }
+    } else {
+      Alert.alert(
+        'Logout',
+        'Are you sure you want to logout?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Logout', style: 'destructive', onPress: doLogout },
+        ]
+      );
+    }
   };
 
   const handleEditProfile = () => {

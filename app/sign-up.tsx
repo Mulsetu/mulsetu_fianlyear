@@ -10,6 +10,7 @@ import {
     Alert,
     FlatList,
     KeyboardAvoidingView,
+    Linking,
     Modal,
     Platform,
     ScrollView,
@@ -18,6 +19,12 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+
+const INSTALL_LINKS = {
+  androidApk: 'https://your-domain.com/mulsetu.apk',
+  ios: 'https://testflight.apple.com/join/your-invite-code',
+  pwa: 'https://your-vercel-domain.vercel.app',
+};
 
 export default function SignUpScreen() {
   const [name, setName] = useState('');
@@ -30,7 +37,6 @@ export default function SignUpScreen() {
   const [language, setLanguage] = useState('English');
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [showUserTypeModal, setShowUserTypeModal] = useState(false);
   const [showMarketModal, setShowMarketModal] = useState(false);
   const [showLanguageModal, setShowLanguageModal] = useState(false);
@@ -199,20 +205,24 @@ export default function SignUpScreen() {
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    setIsGoogleLoading(true);
-    try {
-      // TODO: Implement Google authentication with Supabase
-      // For now, just simulate a delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Navigate to tabs (home)
-      router.replace('/(tabs)/home');
-    } catch {
-      Alert.alert('Error', 'Failed to sign up with Google. Please try again.');
-    } finally {
-      setIsGoogleLoading(false);
+  const handleOpenInstallLink = async (url: string, label: string) => {
+    const isPlaceholder =
+      url.includes('your-domain.com') ||
+      url.includes('your-invite-code') ||
+      url.includes('your-vercel-domain');
+
+    if (isPlaceholder) {
+      Alert.alert('Install link not configured', `Please update the ${label} link in app/sign-up.tsx.`);
+      return;
     }
+
+    const canOpen = await Linking.canOpenURL(url);
+    if (!canOpen) {
+      Alert.alert('Unable to open link', `Could not open ${label} link.`);
+      return;
+    }
+
+    await Linking.openURL(url);
   };
 
   return (
@@ -401,21 +411,38 @@ export default function SignUpScreen() {
               )}
             </TouchableOpacity>
 
-            {/* Google Sign Up Button */}
-            <TouchableOpacity
-              style={authStyles.googleButton}
-              onPress={handleGoogleSignIn}
-              disabled={isGoogleLoading}
-            >
-              {isGoogleLoading ? (
-                <ActivityIndicator color="#666" size="small" />
-              ) : (
-                <Ionicons name="logo-google" size={20} color="#4285F4" />
-              )}
-              <Text style={authStyles.googleButtonText}>
-                {isGoogleLoading ? 'Signing up...' : 'Continue with Google'}
+            {/* Install Buttons */}
+            <View style={authStyles.installSection}>
+              <Text style={authStyles.installTitle}>Install Mulsetu</Text>
+
+              <TouchableOpacity
+                style={authStyles.installButton}
+                onPress={() => handleOpenInstallLink(INSTALL_LINKS.androidApk, 'Android APK')}
+              >
+                <Ionicons name="logo-android" size={18} color="#ffffff" />
+                <Text style={authStyles.installButtonText}>Install for Android (APK)</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={authStyles.installButton}
+                onPress={() => handleOpenInstallLink(INSTALL_LINKS.ios, 'iPhone')}
+              >
+                <Ionicons name="logo-apple" size={18} color="#ffffff" />
+                <Text style={authStyles.installButtonText}>Install for iPhone</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[authStyles.installButton, authStyles.installPwaButton]}
+                onPress={() => handleOpenInstallLink(INSTALL_LINKS.pwa, 'PWA/Web')}
+              >
+                <Ionicons name="download-outline" size={18} color="#ffffff" />
+                <Text style={authStyles.installButtonText}>Install as PWA (Web)</Text>
+              </TouchableOpacity>
+
+              <Text style={authStyles.installHint}>
+                Android: after download, open the APK file to complete install.
               </Text>
-            </TouchableOpacity>
+            </View>
 
             {/* Sign In Link */}
             <View style={authStyles.linkContainer}>

@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
-import { ArrowDown, ArrowUp, Bell, MapPin, ShoppingCart, TrendingUp } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, Bell, MapPin } from 'lucide-react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useUser } from '@/contexts/UserContext';
@@ -73,36 +73,19 @@ export default function HomeScreen() {
     { id: 'fp2', title: 'Water scheduling', sub: 'Irrigate grapes in morning', image: 'https://images.unsplash.com/photo-1543352634-87392b1f5b6b?q=80&w=1200&auto=format&fit=crop' },
   ];
 
-  // Govt Scheme Updates - will be populated from API
-  const [govtSchemes, setGovtSchemes] = useState([
-    {
-      id: 'gs1',
-      title: 'PM-KISAN Scheme',
-      description: 'Direct income support of ₹6,000 per year to farmers',
-      benefit: '₹6,000/year',
-      updatedDate: '2024-01-15',
-      category: 'Income Support',
-      isNew: true,
-    },
-    {
-      id: 'gs2',
-      title: 'Pradhan Mantri Fasal Bima Yojana',
-      description: 'Crop insurance scheme for farmers',
-      benefit: 'Premium Support',
-      updatedDate: '2024-01-10',
-      category: 'Insurance',
-      isNew: false,
-    },
-    {
-      id: 'gs3',
-      title: 'e-NAM Platform',
-      description: 'National Agriculture Market for transparent trading',
-      benefit: 'Better Prices',
-      updatedDate: '2024-01-08',
-      category: 'Trading',
-      isNew: false,
-    },
-  ]);
+  // Central agriculture schemes – Govt Scheme Updates (Farmer dashboard)
+  const centralAgricultureSchemes = [
+    { name: 'PM-KISAN', description: 'Income support of ₹6000 per year to farmers', website: 'https://pmkisan.gov.in' },
+    { name: 'PM Fasal Bima Yojana', description: 'Crop insurance scheme for farmers', website: 'https://pmfby.gov.in' },
+    { name: 'PM Krishi Sinchai Yojana', description: 'Irrigation scheme to improve water efficiency', website: 'https://pmksy.gov.in' },
+    { name: 'Soil Health Card Scheme', description: 'Provides soil nutrient status and fertilizer advice', website: 'https://soilhealth.dac.gov.in' },
+    { name: 'PM Kisan Maandhan Yojana', description: 'Pension scheme for small and marginal farmers', website: 'https://maandhan.in' },
+    { name: 'PM Kusum Scheme', description: 'Solar pump subsidy and renewable energy for farmers', website: 'https://pmkusum.mnre.gov.in' },
+    { name: 'eNAM', description: 'National Agriculture Market trading platform', website: 'https://enam.gov.in' },
+    { name: 'Agriculture Infrastructure Fund', description: 'Financial support for agriculture infrastructure', website: 'https://agriinfra.dac.gov.in' },
+    { name: 'National Bamboo Mission', description: 'Promotes bamboo cultivation and industry', website: 'https://nbm.nic.in' },
+    { name: 'FPO Scheme', description: 'Support for forming Farmer Producer Organizations', website: 'https://sfacindia.com' },
+  ];
 
   // Trader: ongoing (pending) bids
   interface OngoingBid {
@@ -126,6 +109,7 @@ export default function HomeScreen() {
   const [leaderboardProduce, setLeaderboardProduce] = useState('');
   const [leaderboardOffers, setLeaderboardOffers] = useState<Array<{ buyer_name: string; quantity: number; price_per_quintal: number; total_amount: number; status: string }>>([]);
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
+  const [showSchemesModal, setShowSchemesModal] = useState(false);
 
   const openLeaderboard = useCallback(async (listingId: string, produce: string) => {
     setLeaderboardProduce(produce);
@@ -301,7 +285,7 @@ export default function HomeScreen() {
         const next = (prev + 1) % highlightCards.length;
         if (fruitSliderRef.current) {
           fruitSliderRef.current.scrollTo({
-            x: next * 300, // 284 (width) + 16 (marginRight)
+            x: next * 236, // 220 (width) + 16 (marginRight)
             animated: true,
           });
         }
@@ -336,14 +320,14 @@ export default function HomeScreen() {
         </View>
 
         {/* Highlight slider: live mandi prices with fruit images and names */}
-        <View style={{ marginTop: 20 }}>
+        <View style={{ marginTop: 12 }}>
           <ScrollView
             ref={fruitSliderRef}
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 20, paddingVertical: 8 }}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 6 }}
             pagingEnabled={false}
-            snapToInterval={300}
+            snapToInterval={236}
             snapToAlignment="start"
             decelerationRate="fast"
             onScrollBeginDrag={() => setIsUserScrolling(true)}
@@ -352,7 +336,7 @@ export default function HomeScreen() {
             }}
             onMomentumScrollEnd={(event) => {
               const offsetX = event.nativeEvent.contentOffset.x;
-              const index = Math.round(offsetX / 300);
+              const index = Math.round(offsetX / 236);
               setCurrentFruitIndex(index);
             }}
           >
@@ -361,21 +345,21 @@ export default function HomeScreen() {
                 key={card.id}
                 style={{
                   marginRight: 16,
-                  width: 284,
-                  borderRadius: 20,
-                  borderWidth: currentFruitIndex === index ? 3 : 1.5,
+                  width: 220,
+                  borderRadius: 14,
+                  borderWidth: currentFruitIndex === index ? 2.5 : 1.5,
                   borderColor: currentFruitIndex === index ? '#60941a' : '#e5e7eb',
                   backgroundColor: '#ffffff',
                   overflow: 'hidden',
-                  elevation: currentFruitIndex === index ? 12 : 4,
+                  elevation: currentFruitIndex === index ? 8 : 3,
                   shadowColor: currentFruitIndex === index ? '#60941a' : '#000',
-                  shadowOffset: { width: 0, height: currentFruitIndex === index ? 6 : 3 },
-                  shadowOpacity: currentFruitIndex === index ? 0.25 : 0.12,
-                  shadowRadius: currentFruitIndex === index ? 12 : 6,
+                  shadowOffset: { width: 0, height: currentFruitIndex === index ? 4 : 2 },
+                  shadowOpacity: currentFruitIndex === index ? 0.2 : 0.1,
+                  shadowRadius: currentFruitIndex === index ? 8 : 5,
                 }}
               >
                 {/* Fruit Image Section */}
-                <View style={{ height: 160, width: '100%', position: 'relative' }}>
+                <View style={{ height: 100, width: '100%', position: 'relative' }}>
                   <Image
                     source={{ uri: card.image }}
                     resizeMode="cover"
@@ -388,7 +372,7 @@ export default function HomeScreen() {
                       bottom: 0,
                       left: 0,
                       right: 0,
-                      height: 80,
+                      height: 48,
                       backgroundColor: 'rgba(0, 0, 0, 0.2)',
                     }}
                   />
@@ -400,13 +384,13 @@ export default function HomeScreen() {
                       left: 0,
                       right: 0,
                       backgroundColor: 'rgba(25, 105, 108, 0.95)',
-                      paddingVertical: 12,
-                      paddingHorizontal: 16,
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
                     }}
                   >
                     <Text
                       style={{
-                        fontSize: 22,
+                        fontSize: 16,
                         fontWeight: '800',
                         color: '#ffffff',
                         textAlign: 'center',
@@ -418,8 +402,8 @@ export default function HomeScreen() {
             </View>
                 </View>
                 {/* Price Section */}
-                <View style={{ paddingHorizontal: 16, paddingVertical: 16, backgroundColor: '#ffffff' }}>
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#9ca3af', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
+                <View style={{ paddingHorizontal: 12, paddingVertical: 12, backgroundColor: '#ffffff' }}>
+                  <Text style={{ fontSize: 9, fontWeight: '700', color: '#9ca3af', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
                     Live Mandi Price
                   </Text>
                   <View
@@ -432,7 +416,7 @@ export default function HomeScreen() {
                     <View style={{ flex: 1 }}>
                       <Text
                         style={{
-                          fontSize: 28,
+                          fontSize: 20,
                           fontWeight: '800',
                           color: '#60941a',
                           letterSpacing: -0.5,
@@ -442,10 +426,10 @@ export default function HomeScreen() {
                       </Text>
                       <Text
                         style={{
-                          fontSize: 14,
+                          fontSize: 12,
                           fontWeight: '600',
                           color: '#19696c',
-                          marginTop: 6,
+                          marginTop: 4,
                         }}
                       >
                         {card.mandi}
@@ -456,18 +440,18 @@ export default function HomeScreen() {
                         flexDirection: 'row',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        marginLeft: 12,
+                        marginLeft: 8,
                         backgroundColor: card.up ? 'rgba(96, 148, 26, 0.15)' : 'rgba(229, 57, 53, 0.15)',
-                        paddingHorizontal: 10,
-                        paddingVertical: 8,
-                        borderRadius: 10,
-                        minWidth: 44,
+                        paddingHorizontal: 8,
+                        paddingVertical: 6,
+                        borderRadius: 8,
+                        minWidth: 36,
                       }}
                     >
                       {card.up ? (
-                        <ArrowUp color="#60941a" size={24} />
+                        <ArrowUp color="#60941a" size={18} />
                       ) : (
-                        <ArrowDown color="#E53935" size={24} />
+                        <ArrowDown color="#E53935" size={18} />
                       )}
                     </View>
                   </View>
@@ -480,17 +464,17 @@ export default function HomeScreen() {
               flexDirection: 'row',
               justifyContent: 'center',
               alignItems: 'center',
-              marginTop: 16,
-              gap: 8,
+              marginTop: 10,
+              gap: 6,
             }}
           >
             {highlightCards.map((_, index) => (
               <View
                 key={index}
                 style={{
-                  width: currentFruitIndex === index ? 32 : 10,
-                  height: 10,
-                  borderRadius: 5,
+                  width: currentFruitIndex === index ? 24 : 8,
+                  height: 8,
+                  borderRadius: 4,
                   backgroundColor: currentFruitIndex === index ? '#60941a' : '#d1d5db',
                 }}
               />
@@ -521,9 +505,6 @@ export default function HomeScreen() {
               }}
               activeOpacity={0.8}
             >
-              <View style={{ marginRight: 6 }}>
-                <TrendingUp color="#ffffff" size={20} strokeWidth={2.5} />
-              </View>
               <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700' }} numberOfLines={1}>Market Trends</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -547,9 +528,6 @@ export default function HomeScreen() {
               activeOpacity={0.8}
               onPress={() => router.push('/(tabs)/buy')}
             >
-              <View style={{ marginRight: 6 }}>
-                <ShoppingCart color="#ffffff" size={20} strokeWidth={2.5} />
-              </View>
               <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700' }} numberOfLines={1}>Buy Crop</Text>
             </TouchableOpacity>
           </View>
@@ -835,14 +813,16 @@ export default function HomeScreen() {
         <View style={{ marginTop: 28, paddingHorizontal: 16, marginBottom: 24 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <Text style={{ fontSize: 20, fontWeight: '800', color: '#19696c' }}>Govt Scheme Updates</Text>
-            <TouchableOpacity>
-              <Text style={{ fontSize: 14, fontWeight: '600', color: '#60941a' }}>View All</Text>
+            <TouchableOpacity
+              onPress={() => setShowSchemesModal(true)}
+              style={{ paddingVertical: 4, paddingHorizontal: 8 }}
+            >
+              <Text style={{ fontSize: 14, fontWeight: '600', color: '#60941a' }}>View more</Text>
             </TouchableOpacity>
           </View>
-          {govtSchemes.map((scheme) => (
-            <TouchableOpacity
-              key={scheme.id}
-              activeOpacity={0.8}
+          {centralAgricultureSchemes.slice(0, 3).map((scheme, index) => (
+            <View
+              key={`${scheme.name}-${index}`}
               style={{
                 backgroundColor: '#ffffff',
                 borderRadius: 16,
@@ -858,68 +838,111 @@ export default function HomeScreen() {
               }}
             >
               <View style={{ padding: 16 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                      <Text style={{ fontSize: 17, fontWeight: '800', color: '#19696c', flex: 1 }}>
-                        {scheme.title}
-                      </Text>
-                      {scheme.isNew && (
-                        <View
-                          style={{
-                            backgroundColor: '#60941a',
-                            paddingHorizontal: 8,
-                            paddingVertical: 4,
-                            borderRadius: 6,
-                            marginLeft: 8,
-                          }}
-                        >
-                          <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: '700' }}>NEW</Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text style={{ fontSize: 13, fontWeight: '500', color: '#6b7280', marginTop: 4, lineHeight: 18 }}>
-                      {scheme.description}
-                    </Text>
-                  </View>
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                    <View
-                      style={{
-                        backgroundColor: 'rgba(96, 148, 26, 0.15)',
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderRadius: 8,
-                        marginRight: 10,
-                      }}
-                    >
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#60941a' }}>
-                        💰 {scheme.benefit}
-                      </Text>
-                    </View>
-                    <View
-                      style={{
-                        backgroundColor: 'rgba(25, 105, 108, 0.1)',
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderRadius: 8,
-                      }}
-                    >
-                      <Text style={{ fontSize: 11, fontWeight: '600', color: '#19696c' }}>
-                        {scheme.category}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={{ fontSize: 11, fontWeight: '500', color: '#9ca3af', marginLeft: 8 }}>
-                    Updated: {new Date(scheme.updatedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                  </Text>
-        </View>
+                <Text style={{ fontSize: 17, fontWeight: '800', color: '#19696c', marginBottom: 6 }}>
+                  {scheme.name}
+                </Text>
+                <Text style={{ fontSize: 13, fontWeight: '500', color: '#6b7280', lineHeight: 18, marginBottom: 12 }}>
+                  {scheme.description}
+                </Text>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => scheme.website && Linking.openURL(scheme.website)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    alignSelf: 'flex-start',
+                    backgroundColor: 'rgba(96, 148, 26, 0.15)',
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                  }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#60941a' }}>Visit website</Text>
+                  <Text style={{ marginLeft: 4, fontSize: 12 }}>→</Text>
+                </TouchableOpacity>
               </View>
-            </TouchableOpacity>
+            </View>
           ))}
+          <TouchableOpacity
+            onPress={() => setShowSchemesModal(true)}
+            style={{
+              backgroundColor: 'rgba(96, 148, 26, 0.12)',
+              borderRadius: 12,
+              paddingVertical: 12,
+              alignItems: 'center',
+              borderWidth: 1,
+              borderColor: '#60941a',
+              borderStyle: 'dashed',
+            }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: '700', color: '#60941a' }}>View more schemes</Text>
+          </TouchableOpacity>
         </View>
         )}
+
+        {/* Govt Schemes – All schemes popup */}
+        <Modal
+          visible={showSchemesModal}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowSchemesModal(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+            <View style={{ backgroundColor: '#ffffff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%', paddingBottom: 24 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', color: '#19696c' }}>All Govt Schemes</Text>
+                <TouchableOpacity onPress={() => setShowSchemesModal(false)} style={{ padding: 8 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#60941a' }}>Close</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={{ maxHeight: 400 }} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16 }} showsVerticalScrollIndicator={true}>
+                {centralAgricultureSchemes.map((scheme, index) => (
+                  <View
+                    key={`all-${scheme.name}-${index}`}
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: 14,
+                      marginBottom: 10,
+                      elevation: 2,
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 1 },
+                      shadowOpacity: 0.08,
+                      shadowRadius: 4,
+                      borderWidth: 1,
+                      borderColor: '#e5e7eb',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <View style={{ padding: 14 }}>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: '#19696c', marginBottom: 6 }}>
+                        {scheme.name}
+                      </Text>
+                      <Text style={{ fontSize: 12, fontWeight: '500', color: '#6b7280', lineHeight: 18, marginBottom: 10 }}>
+                        {scheme.description}
+                      </Text>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => scheme.website && Linking.openURL(scheme.website)}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          alignSelf: 'flex-start',
+                          backgroundColor: 'rgba(96, 148, 26, 0.15)',
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#60941a' }}>Visit website</Text>
+                        <Text style={{ marginLeft: 4, fontSize: 11 }}>→</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
         </View>
       </ScrollView>
     </SafeAreaView>

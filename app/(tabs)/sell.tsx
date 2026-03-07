@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -71,6 +71,9 @@ export default function SellProduceScreen() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [isLoadingListings, setIsLoadingListings] = useState<boolean>(true);
   const [isSubmittingListing, setIsSubmittingListing] = useState(false);
+  const [showProduceDropdown, setShowProduceDropdown] = useState(false);
+  const [produceSearch, setProduceSearch] = useState('');
+  const [discoverFruits, setDiscoverFruits] = useState<{ commodity_name: string }[]>([]);
   const [formData, setFormData] = useState({
     produce: '',
     quality: '',
@@ -95,6 +98,43 @@ export default function SellProduceScreen() {
       setShowCreateModal(true);
     }
   }, [params.openCreate]);
+
+  // Load fruits from discover section when create modal opens
+  useEffect(() => {
+    if (!showCreateModal) return;
+    const loadDiscoverFruits = async () => {
+      try {
+        const viewResult = await supabase
+          .from('discover_fruits')
+          .select('commodity_name')
+          .order('display_order', { ascending: true, nullsLast: true })
+          .order('commodity_name', { ascending: true });
+
+        if (viewResult.error) {
+          const tableResult = await supabase
+            .from('fruit_commodities')
+            .select('commodity_name, is_active')
+            .order('commodity_name', { ascending: true });
+          if (!tableResult.error && tableResult.data) {
+            const filtered = tableResult.data.filter((f: any) => f.is_active !== false);
+            setDiscoverFruits(filtered.map((f: any) => ({ commodity_name: f.commodity_name })));
+          }
+        } else if (viewResult.data) {
+          setDiscoverFruits(viewResult.data);
+        }
+      } catch (err) {
+        console.error('Error loading discover fruits:', err);
+      }
+    };
+    loadDiscoverFruits();
+  }, [showCreateModal]);
+
+  // Filter produce by search
+  const filteredProduce = useMemo(() => {
+    if (!produceSearch.trim()) return discoverFruits;
+    const q = produceSearch.toLowerCase();
+    return discoverFruits.filter((f) => f.commodity_name.toLowerCase().includes(q));
+  }, [discoverFruits, produceSearch]);
 
   // Load listings for the logged-in seller
   useEffect(() => {
@@ -630,14 +670,85 @@ export default function SellProduceScreen() {
             <ScrollView style={styles.modalScrollView}>
               <View style={styles.inputContainer}>
                 <Text style={styles.inputLabel}>Produce</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter produce name"
-                  value={formData.produce}
-                  onChangeText={(text) => setFormData({ ...formData, produce: text })}
-                  placeholderTextColor={Colors.light.icon}
-                />
+                <TouchableOpacity
+                  style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                  onPress={() => setShowProduceDropdown(true)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.dropdownText, !formData.produce && { color: Colors.light.icon }]} numberOfLines={1}>
+                    {formData.produce || 'Select produce / fruit'}
+                  </Text>
+                  <Ionicons name="chevron-down" size={20} color={Colors.light.icon} />
+                </TouchableOpacity>
               </View>
+
+              {/* Produce dropdown modal */}
+              <Modal
+                visible={showProduceDropdown}
+                transparent
+                animationType="fade"
+                onRequestClose={() => {
+                  setShowProduceDropdown(false);
+                  setProduceSearch('');
+                }}
+              >
+                <TouchableOpacity
+                  style={styles.dropdownOverlay}
+                  activeOpacity={1}
+                  onPress={() => {
+                    setShowProduceDropdown(false);
+                    setProduceSearch('');
+                  }}
+                >
+                  <View style={styles.dropdownModal} onStartShouldSetResponder={() => true}>
+                    <Text style={styles.dropdownModalTitle}>Select produce</Text>
+                    {/* Search bar */}
+                    <View style={styles.produceSearchContainer}>
+                      <Ionicons name="search" size={20} color={Colors.light.icon} />
+                      <TextInput
+                        style={styles.produceSearchInput}
+                        placeholder="Search fruits / produce..."
+                        placeholderTextColor={Colors.light.icon}
+                        value={produceSearch}
+                        onChangeText={setProduceSearch}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                      {produceSearch.length > 0 && (
+                        <TouchableOpacity onPress={() => setProduceSearch('')}>
+                          <Ionicons name="close-circle" size={20} color={Colors.light.icon} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    <ScrollView style={styles.dropdownScroll} keyboardShouldPersistTaps="handled">
+                      {filteredProduce.length === 0 ? (
+                        <View style={styles.produceEmptyState}>
+                          <Text style={styles.produceEmptyText}>
+                            {produceSearch ? 'No produce found matching your search.' : 'No produce available.'}
+                          </Text>
+                        </View>
+                      ) : (
+                        filteredProduce.map((fruit) => (
+                          <TouchableOpacity
+                            key={fruit.commodity_name}
+                            style={[styles.dropdownOption, formData.produce === fruit.commodity_name && styles.dropdownOptionActive]}
+                            onPress={() => {
+                              setFormData({ ...formData, produce: fruit.commodity_name });
+                              setShowProduceDropdown(false);
+                              setProduceSearch('');
+                            }}
+                          >
+                            <Text style={[styles.dropdownOptionText, formData.produce === fruit.commodity_name && styles.dropdownOptionTextActive]}>
+                              {fruit.commodity_name}
+                            </Text>
+                            {formData.produce === fruit.commodity_name && <Ionicons name="checkmark" size={20} color={Colors.light.primary} />}
+                          </TouchableOpacity>
+                        ))
+                      )}
+                    </ScrollView>
+                  </View>
+                </TouchableOpacity>
+              </Modal>
 
               <View style={styles.inputContainer}>
                 <Text style={styles.inputLabel}>Quality/Grade</Text>
@@ -1341,6 +1452,88 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: 'System',
     color: Colors.light.text,
+  },
+  dropdownText: {
+    fontSize: 16,
+    color: Colors.light.text,
+    flex: 1,
+    fontFamily: 'System',
+  },
+  dropdownOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  dropdownModal: {
+    backgroundColor: Colors.light.background,
+    borderRadius: 16,
+    maxHeight: '70%',
+    overflow: 'hidden',
+  },
+  dropdownModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.light.text,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
+    fontFamily: 'System',
+  },
+  produceSearchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: Colors.light.inputBackground,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    gap: 8,
+  },
+  produceSearchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: Colors.light.text,
+    fontFamily: 'System',
+    paddingVertical: 4,
+  },
+  produceEmptyState: {
+    padding: 24,
+    alignItems: 'center',
+  },
+  produceEmptyText: {
+    fontSize: 14,
+    color: Colors.light.icon,
+    textAlign: 'center',
+    fontFamily: 'System',
+  },
+  dropdownScroll: {
+    maxHeight: 320,
+  },
+  dropdownOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
+  },
+  dropdownOptionActive: {
+    backgroundColor: 'rgba(25, 105, 108, 0.08)',
+  },
+  dropdownOptionText: {
+    fontSize: 16,
+    color: Colors.light.text,
+    fontFamily: 'System',
+  },
+  dropdownOptionTextActive: {
+    fontWeight: '600',
+    color: Colors.light.primary,
   },
   modalButtons: {
     flexDirection: 'row',
