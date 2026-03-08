@@ -8,6 +8,17 @@ import 'react-native-reanimated';
 import { UserProvider } from '@/contexts/UserContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
+type DeferredInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+};
+
+declare global {
+  interface Window {
+    __mulsetuDeferredInstallPrompt?: DeferredInstallPromptEvent | null;
+  }
+}
+
 export const unstable_settings = {
   anchor: '(tabs)',
 };
@@ -33,6 +44,27 @@ export default function RootLayout() {
     window.addEventListener('load', register, { once: true });
     return () => {
       window.removeEventListener('load', register);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      window.__mulsetuDeferredInstallPrompt = event as DeferredInstallPromptEvent;
+    };
+
+    const handleAppInstalled = () => {
+      window.__mulsetuDeferredInstallPrompt = null;
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt as EventListener);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt as EventListener);
+      window.removeEventListener('appinstalled', handleAppInstalled);
     };
   }, []);
 

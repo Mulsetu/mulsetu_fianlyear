@@ -31,6 +31,12 @@ type DeferredInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 };
 
+declare global {
+  interface Window {
+    __mulsetuDeferredInstallPrompt?: DeferredInstallPromptEvent | null;
+  }
+}
+
 export default function SignUpScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -74,12 +80,27 @@ export default function SignUpScreen() {
 
     const handleBeforeInstallPrompt = (event: Event) => {
       event.preventDefault();
-      deferredInstallPromptRef.current = event as DeferredInstallPromptEvent;
+      const deferredEvent = event as DeferredInstallPromptEvent;
+      deferredInstallPromptRef.current = deferredEvent;
+      window.__mulsetuDeferredInstallPrompt = deferredEvent;
+    };
+
+    const handleAppInstalled = () => {
+      deferredInstallPromptRef.current = null;
+      window.__mulsetuDeferredInstallPrompt = null;
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt as EventListener);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    // If the event was captured on an earlier route, reuse it here.
+    if (window.__mulsetuDeferredInstallPrompt) {
+      deferredInstallPromptRef.current = window.__mulsetuDeferredInstallPrompt;
+    }
+
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt as EventListener);
+      window.removeEventListener('appinstalled', handleAppInstalled);
     };
   }, []);
 
@@ -227,16 +248,24 @@ export default function SignUpScreen() {
 
   const handleOpenInstallLink = async (url: string, label: string) => {
     if (label === 'PWA/Web' && Platform.OS === 'web') {
-      if (deferredInstallPromptRef.current) {
-        await deferredInstallPromptRef.current.prompt();
-        await deferredInstallPromptRef.current.userChoice;
+      const deferredPrompt =
+        deferredInstallPromptRef.current ?? window.__mulsetuDeferredInstallPrompt ?? null;
+
+      if (deferredPrompt) {
+        await deferredPrompt.prompt();
+        await deferredPrompt.userChoice;
         deferredInstallPromptRef.current = null;
+        window.__mulsetuDeferredInstallPrompt = null;
         return;
       }
 
+      const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
       Alert.alert(
         'Install steps',
-        'If install prompt is not shown: Android Chrome menu > Install app. iPhone Safari share > Add to Home Screen.'
+        isIos
+          ? 'On iPhone/iPad use Safari: tap Share, then Add to Home Screen.'
+          : 'Open in Chrome and use menu > Install app (or Add to Home screen).'
       );
       return;
     }
