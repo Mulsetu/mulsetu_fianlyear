@@ -99,3 +99,26 @@ This is the frontend-only version. The next phase will include:
 - Form validation is implemented on the frontend
 - Loading states are included for better UX
 - The app is ready for Supabase integration
+
+## AI Prediction Setup (Gemini)
+
+The AI prediction tab now calls a Supabase Edge Function (`ai-price-prediction`) which securely uses your Gemini API key server-side.
+
+1. Add required secrets in Supabase:
+   ```bash
+   supabase secrets set GEMINI_API_KEY=your_gemini_key
+   supabase secrets set GEMINI_MODEL=gemini-2.0-flash
+   ```
+
+2. Deploy the edge function:
+   ```bash
+   supabase functions deploy ai-price-prediction
+   ```
+
+3. Ensure app env vars are present (client-safe values only):
+   - `EXPO_PUBLIC_SUPABASE_URL`
+   - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+
+Important:
+- Never store `GEMINI_API_KEY` in Expo public env vars.
+- Keep API keys only in Supabase secrets or another secure backend secret store.

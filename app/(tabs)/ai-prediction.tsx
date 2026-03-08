@@ -1,25 +1,72 @@
 import { Colors } from '@/constants/theme';
 import { useUser } from '@/contexts/UserContext';
+import { AiMandiCandidate, AiNearbyMandi, Horizon } from '@/utils/aiPrediction';
+import { getResponsiveDimensions, isDesktop } from '@/utils/responsive';
 import { fetchAllStateMarkets } from '@/utils/stateMarketImport';
 import { supabase } from '@/utils/supabaseClient';
-import { getResponsiveDimensions, isDesktop } from '@/utils/responsive';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  Modal,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Modal,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 
-type Horizon = '1D' | '7D';
+type PredictionPoint = {
+  dayLabel: string;
+  price: number;
+};
+
+type ManualQueueStatus = 'pending' | 'completed' | 'failed';
+
+function buildLocalFallbackPredictions(crop: string): PredictionPoint[] {
+  const base = 2500 + (crop.length % 11) * 95;
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const dayShift = index - 3;
+    const price = Math.max(400, Math.round(base + dayShift * 42));
+
+    return {
+      dayLabel: index === 0 ? 'Tomorrow' : `Day ${index + 1}`,
+      price,
+    };
+  });
+}
+
+function buildLocalFallbackNearbyMandis(basePrice: number, candidateMandis: AiMandiCandidate[]): AiNearbyMandi[] {
+  const names = candidateMandis.map((item) => item.name).filter(Boolean);
+  const options = [
+    { name: names[0] || 'Nearby APMC 1', distanceKm: 25, factor: 1.08 },
+    { name: names[1] || 'Nearby APMC 2', distanceKm: 40, factor: 0.97 },
+    { name: names[2] || 'Nearby APMC 3', distanceKm: 60, factor: 1.12 },
+  ];
+
+  const quantityQtl = 10;
+  const transportPerKmPerQtl = 5;
+
+  return options.map((option) => {
+    const targetPrice = Math.max(1, Math.round(basePrice * option.factor));
+    const extraPerQtl = targetPrice - basePrice;
+    const netProfit = extraPerQtl * quantityQtl - option.distanceKm * transportPerKmPerQtl * quantityQtl;
+
+    return {
+      name: option.name,
+      distanceKm: option.distanceKm,
+      targetPrice,
+      extraPerQtl,
+      netProfit,
+      worthIt: netProfit > 0,
+      reason: netProfit > 0 ? 'Higher effective return after transport' : 'Transport cost reduces profit',
+    };
+  });
+}
 
 export default function AiPredictionScreen() {
   const { user } = useUser();
@@ -30,9 +77,18 @@ export default function AiPredictionScreen() {
   const [fruitModalVisible, setFruitModalVisible] = useState(false);
   const [selectedFruit, setSelectedFruit] = useState<string>('');
   const [horizon, setHorizon] = useState<Horizon>('1D');
+  const [predictions, setPredictions] = useState<PredictionPoint[]>([]);
+  const [isLoadingPrediction, setIsLoadingPrediction] = useState(false);
+  const [predictionError, setPredictionError] = useState<string>('');
+  const [predictionSummary, setPredictionSummary] = useState<string>('');
+  const [predictionModel, setPredictionModel] = useState<string>('');
+  const [baseMandiName, setBaseMandiName] = useState<string>('');
+  const [nearbyMandis, setNearbyMandis] = useState<AiNearbyMandi[]>([]);
+  const [activeRequestId, setActiveRequestId] = useState<string>('');
+  const [queueStatus, setQueueStatus] = useState<ManualQueueStatus | ''>('');
   
   // Mandi selection state
-  const [markets, setMarkets] = useState<Array<{ market_name: string; state_name: string }>>([]);
+  const [markets, setMarkets] = useState<{ market_name: string; state_name: string }[]>([]);
   const [loadingMarkets, setLoadingMarkets] = useState(false);
   const [selectedMandi, setSelectedMandi] = useState<string>(user?.market || '');
   const [mandiModalVisible, setMandiModalVisible] = useState(false);
@@ -60,8 +116,8 @@ export default function AiPredictionScreen() {
             .filter((n): n is string => !!n) ?? [];
 
         setFruits(names);
-        if (names.length > 0 && !selectedFruit) {
-          setSelectedFruit(names[0]);
+        if (names.length > 0) {
+          setSelectedFruit((prev) => prev || names[0]);
         }
       } finally {
         setIsLoadingFruits(false);
@@ -91,10 +147,155 @@ export default function AiPredictionScreen() {
 
   // Set initial mandi from user profile
   useEffect(() => {
-    if (user?.market && !selectedMandi) {
-      setSelectedMandi(user.market);
+    if (user?.market) {
+      setSelectedMandi((prev) => prev || user.market);
     }
   }, [user]);
+
+  const candidateMandis: AiMandiCandidate[] = useMemo(
+    () => markets
+      .filter((market) => market.market_name !== selectedMandi)
+      .slice(0, 25)
+      .map((market) => ({
+        name: market.market_name,
+        stateName: market.state_name || undefined,
+      })),
+    [markets, selectedMandi],
+  );
+
+  const handleCheckPrediction = async () => {
+    if (!selectedFruit || !selectedMandi) {
+      return;
+    }
+
+    setIsLoadingPrediction(true);
+    setPredictionError('');
+    setQueueStatus('pending');
+
+    try {
+      const candidateListText = candidateMandis
+        .slice(0, 25)
+        .map((item, index) => `${index + 1}. ${item.name}${item.stateName ? ` (${item.stateName})` : ''}`)
+        .join('\n');
+
+      const manualPrompt =
+        `Generate crop intelligence for crop '${selectedFruit}' and mandi '${selectedMandi}'.\n` +
+        `Horizon: ${horizon}.\n` +
+        'Return ONLY strict JSON with keys: predictions, baseMandi, nearbyMandis, confidence, summary, model.\n' +
+        'Use INR per quintal values and realistic volatility.\n' +
+        'For nearbyMandis use exactly 3 names from candidate list and include distanceKm, targetPrice, extraPerQtl, netProfit, worthIt, reason.\n' +
+        (candidateListText ? `Candidate mandis:\n${candidateListText}` : '');
+
+      const { data, error } = await supabase
+        .from('ai_prediction_manual_requests')
+        .insert({
+          crop: selectedFruit,
+          mandi: selectedMandi,
+          horizon,
+          candidate_mandis: candidateMandis,
+          prompt: manualPrompt,
+          status: 'pending',
+          updated_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single();
+
+      if (error || !data?.id) {
+        throw new Error(error?.message || 'Failed to create manual AI request');
+      }
+
+      setActiveRequestId(data.id);
+      setPredictions([]);
+      setNearbyMandis([]);
+      setPredictionSummary('Request sent to admin queue. Admin will paste Gemini output soon.');
+      setPredictionModel('manual-queue');
+      setBaseMandiName(selectedMandi || user?.market || 'Your mandi');
+    } catch (error) {
+      setQueueStatus('failed');
+      setPredictionError(error instanceof Error ? error.message : 'Failed to queue manual request');
+      const fallback = buildLocalFallbackPredictions(selectedFruit);
+      const fallbackNearby = buildLocalFallbackNearbyMandis(fallback[0].price, candidateMandis);
+      setPredictions(horizon === '1D' ? fallback.slice(0, 1) : fallback);
+      setPredictionSummary('Using fallback estimate because request could not be queued.');
+      setPredictionModel('local-fallback');
+      setBaseMandiName(selectedMandi || user?.market || 'Your mandi');
+      setNearbyMandis(fallbackNearby);
+    } finally {
+      setIsLoadingPrediction(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!activeRequestId) {
+      return;
+    }
+
+    const pollRequest = async () => {
+      const { data, error } = await supabase
+        .from('ai_prediction_manual_requests')
+        .select('status, response_json, admin_note')
+        .eq('id', activeRequestId)
+        .maybeSingle();
+
+      if (error || !data) {
+        return;
+      }
+
+      const status = data.status as ManualQueueStatus;
+      setQueueStatus(status);
+
+      if (status === 'failed') {
+        setPredictionError(data.admin_note || 'Admin marked request as failed.');
+        setPredictionSummary('Admin queue failed for this request.');
+        setPredictionModel('manual-queue-failed');
+        setActiveRequestId('');
+        return;
+      }
+
+      if (status !== 'completed') {
+        return;
+      }
+
+      const payload = data.response_json as any;
+      if (!payload || !Array.isArray(payload.predictions) || payload.predictions.length === 0) {
+        setPredictionError('Admin response JSON is invalid.');
+        setPredictionSummary('Received invalid response from admin queue.');
+        setPredictionModel('manual-queue-invalid');
+        setActiveRequestId('');
+        return;
+      }
+
+      const parsedPredictions: PredictionPoint[] = payload.predictions.map((item: any, index: number) => ({
+        dayLabel: typeof item?.dayLabel === 'string' ? item.dayLabel : (index === 0 ? 'Tomorrow' : `Day ${index + 1}`),
+        price: Number.isFinite(item?.price) ? Math.max(1, Math.round(item.price)) : 0,
+      }));
+
+      const parsedNearby: AiNearbyMandi[] = Array.isArray(payload.nearbyMandis)
+        ? payload.nearbyMandis.map((item: any) => ({
+          name: typeof item?.name === 'string' ? item.name : 'Nearby mandi',
+          distanceKm: Number.isFinite(item?.distanceKm) ? Math.max(0, Math.round(item.distanceKm)) : 0,
+          targetPrice: Number.isFinite(item?.targetPrice) ? Math.max(1, Math.round(item.targetPrice)) : parsedPredictions[0].price,
+          extraPerQtl: Number.isFinite(item?.extraPerQtl) ? Math.round(item.extraPerQtl) : 0,
+          netProfit: Number.isFinite(item?.netProfit) ? Math.round(item.netProfit) : 0,
+          worthIt: Boolean(item?.worthIt),
+          reason: typeof item?.reason === 'string' ? item.reason : undefined,
+        }))
+        : [];
+
+      const horizonPredictions = horizon === '1D' ? parsedPredictions.slice(0, 1) : parsedPredictions;
+      setPredictions(horizonPredictions);
+      setNearbyMandis(parsedNearby);
+      setBaseMandiName(typeof payload.baseMandi === 'string' ? payload.baseMandi : selectedMandi);
+      setPredictionSummary(typeof payload.summary === 'string' ? payload.summary : 'Manual AI response loaded.');
+      setPredictionModel(typeof payload.model === 'string' ? payload.model : 'manual-admin');
+      setPredictionError('');
+      setActiveRequestId('');
+    };
+
+    pollRequest();
+    const intervalId = setInterval(pollRequest, 5000);
+    return () => clearInterval(intervalId);
+  }, [activeRequestId, horizon, selectedMandi]);
 
   const filteredMarkets = markets.filter((m) => {
     const label = `${m.market_name}${m.state_name ? ` (${m.state_name})` : ''}`;
@@ -106,56 +307,14 @@ export default function AiPredictionScreen() {
     (m) => `${m.market_name}${m.state_name ? ` (${m.state_name})` : ''}`
   );
 
-  // Mock AI predictions – for now static, later will come from backend model
-  const predictions = useMemo(() => {
-    const base = 3000;
-    const volatility = selectedFruit.length * 10;
-    const days = Array.from({ length: 7 }, (_, i) => {
-      const delta = (i - 3) * volatility * 0.1;
-      return {
-        dayLabel: i === 0 ? 'Tomorrow' : `Day ${i + 1}`,
-        price: Math.round(base + delta),
-      };
-    });
-    return days;
-  }, [selectedFruit]);
+  const visiblePredictions = predictions;
+  const maxPrice = predictions.length > 0 ? Math.max(...predictions.map((p) => p.price)) : 0;
+  const minPrice = predictions.length > 0 ? Math.min(...predictions.map((p) => p.price)) : 0;
+  const avgPrice = predictions.length > 0
+    ? Math.round(predictions.reduce((sum, p) => sum + p.price, 0) / predictions.length)
+    : 0;
 
-  const visiblePredictions = horizon === '1D' ? predictions.slice(0, 1) : predictions;
-  const maxPrice = Math.max(...predictions.map(p => p.price));
-  const minPrice = Math.min(...predictions.map(p => p.price));
-  const avgPrice = Math.round(
-    predictions.reduce((sum, p) => sum + p.price, 0) / predictions.length,
-  );
-
-  // Mock profit comparison
-  const baseMandi = selectedMandi || user?.market || 'Select Mandi';
-  const basePrice = predictions[0].price;
-  const nearbyMandis = useMemo(() => {
-    const others = [
-      { name: 'Nearby APMC 1', distanceKm: 25, factor: 1.08 },
-      { name: 'Nearby APMC 2', distanceKm: 40, factor: 0.97 },
-      { name: 'Nearby APMC 3', distanceKm: 60, factor: 1.12 },
-    ];
-    const quantityQtl = 10; // assume 10 qtl
-    const transportPerKmPerQtl = 5; // ₹ per km per qtl (mock)
-
-    return others.map(o => {
-      const targetPrice = Math.round(basePrice * o.factor);
-      const extraPerQtl = targetPrice - basePrice;
-      const extraTotal = extraPerQtl * quantityQtl;
-      const transportCost = o.distanceKm * transportPerKmPerQtl * quantityQtl;
-      const netProfit = extraTotal - transportCost;
-      const worthIt = netProfit > 0;
-
-      return {
-        ...o,
-        targetPrice,
-        extraPerQtl,
-        netProfit,
-        worthIt,
-      };
-    });
-  }, [basePrice]);
+  const basePrice = predictions[0]?.price ?? 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -173,9 +332,10 @@ export default function AiPredictionScreen() {
             </Text>
           </View>
 
-          {/* Fruit Selector */}
+          {/* Input Selectors */}
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Select Crop</Text>
+            <Text style={styles.sectionTitle}>Select Inputs</Text>
+            <Text style={styles.fieldLabel}>Crop Name</Text>
             <TouchableOpacity
               style={styles.dropdown}
               onPress={() => {
@@ -200,6 +360,48 @@ export default function AiPredictionScreen() {
                 size={18}
                 color={Colors.light.icon}
               />
+            </TouchableOpacity>
+
+            <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Mandi / Market Name</Text>
+            <TouchableOpacity
+              style={styles.dropdown}
+              onPress={() => {
+                if (!loadingMarkets && markets.length > 0) {
+                  setMandiModalVisible(true);
+                }
+              }}
+              disabled={loadingMarkets || markets.length === 0}
+            >
+              <Text
+                style={[
+                  styles.dropdownText,
+                  (!selectedMandi || markets.length === 0) && styles.dropdownPlaceholder,
+                ]}
+              >
+                {loadingMarkets
+                  ? 'Loading mandis...'
+                  : selectedMandi || 'Select mandi / market'}
+              </Text>
+              <Ionicons
+                name="chevron-down"
+                size={18}
+                color={Colors.light.icon}
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.checkButton,
+                (!selectedFruit || !selectedMandi || isLoadingPrediction) && styles.checkButtonDisabled,
+              ]}
+              onPress={handleCheckPrediction}
+              disabled={!selectedFruit || !selectedMandi || isLoadingPrediction}
+            >
+              {isLoadingPrediction ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <Text style={styles.checkButtonText}>Check Prediction</Text>
+              )}
             </TouchableOpacity>
           </View>
 
@@ -228,6 +430,10 @@ export default function AiPredictionScreen() {
             </View>
 
             {/* Summary Row */}
+            <Text style={styles.cardSubtitle}>
+              Showing forecast for <Text style={{ fontWeight: '700' }}>{selectedFruit || 'selected crop'}</Text>
+              {' '}in <Text style={{ fontWeight: '700' }}>{selectedMandi || 'selected mandi'}</Text>
+            </Text>
             <View style={styles.summaryRow}>
               <View style={styles.summaryItem}>
                 <Text style={styles.summaryLabel}>Min</Text>
@@ -251,8 +457,13 @@ export default function AiPredictionScreen() {
 
             {/* Simple bar chart style list */}
             <View style={styles.predictionList}>
+              {predictions.length === 0 && !isLoadingPrediction && (
+                <Text style={styles.infoText}>
+                  Select crop and mandi, then tap Check Prediction to fetch AI forecast.
+                </Text>
+              )}
               {visiblePredictions.map((p, idx) => {
-                const widthPct = Math.max(20, (p.price / maxPrice) * 100);
+                const widthPct = maxPrice > 0 ? Math.max(20, (p.price / maxPrice) * 100) : 20;
                 return (
                   <View key={idx} style={styles.predictionRow}>
                     <Text style={styles.predictionDay}>{p.dayLabel}</Text>
@@ -266,8 +477,16 @@ export default function AiPredictionScreen() {
             </View>
 
             <Text style={styles.infoText}>
-              These are mock AI predictions for UI only. We&apos;ll connect the real model to
-              Supabase later.
+              {predictionSummary || 'Prediction summary will appear here after you tap Check Prediction.'}
+            </Text>
+            {!!activeRequestId && (
+              <Text style={styles.infoText}>
+                Queue status: {queueStatus || 'pending'} | Request ID: {activeRequestId}
+              </Text>
+            )}
+            <Text style={styles.infoText}>
+              Model: {predictionModel || 'loading...'}
+              {predictionError ? ` | Warning: ${predictionError}` : ''}
             </Text>
           </View>
 
@@ -283,33 +502,19 @@ export default function AiPredictionScreen() {
                 <Ionicons name="home" size={20} color={Colors.light.primary} />
                 <Text style={styles.baseMandiLabel}>Your Mandi</Text>
               </View>
-              <TouchableOpacity
-                style={styles.mandiDropdown}
-                onPress={() => {
-                  if (!loadingMarkets && markets.length > 0) {
-                    setMandiModalVisible(true);
-                  }
-                }}
-                disabled={loadingMarkets || markets.length === 0}
-              >
+              <View style={styles.mandiDropdown}>
                 <Text
                   style={[
                     styles.mandiDropdownText,
                     (!selectedMandi || markets.length === 0) && styles.mandiDropdownPlaceholder,
                   ]}
                 >
-                  {loadingMarkets
-                    ? 'Loading mandis...'
-                    : selectedMandi || 'Select your mandi'}
+                  {selectedMandi || 'Select mandi / market from inputs above'}
                 </Text>
-                <Ionicons
-                  name="chevron-down"
-                  size={18}
-                  color={Colors.light.icon}
-                />
-              </TouchableOpacity>
+              </View>
               {selectedMandi && (
                 <Text style={styles.baseMandiPrice}>
+                  {baseMandiName ? `${baseMandiName} | ` : ''}
                   Tomorrow&apos;s predicted price:{' '}
                   <Text style={{ fontWeight: '700' }}>₹{basePrice}/qtl</Text>
                 </Text>
@@ -356,8 +561,8 @@ export default function AiPredictionScreen() {
             </View>
 
             <Text style={styles.infoText}>
-              Transport and distance are approximated. Later we will plug in real routes, fuel
-              costs and live mandi prices from Supabase.
+              Nearby mandi comparison is generated from the same AI response using your selected
+              crop and mandi.
             </Text>
           </View>
         </View>
@@ -553,6 +758,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     fontFamily: 'System',
   },
+  fieldLabel: {
+    fontSize: 13,
+    color: Colors.light.icon,
+    marginBottom: 6,
+    fontFamily: 'System',
+    fontWeight: '600',
+  },
   chipRow: {
     flexDirection: 'row',
     gap: 8,
@@ -598,6 +810,23 @@ const styles = StyleSheet.create({
   },
   dropdownPlaceholder: {
     color: Colors.light.icon,
+  },
+  checkButton: {
+    marginTop: 14,
+    backgroundColor: Colors.light.primary,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkButtonDisabled: {
+    opacity: 0.55,
+  },
+  checkButtonText: {
+    color: 'white',
+    fontWeight: '700',
+    fontSize: 14,
+    fontFamily: 'System',
   },
   horizonHeader: {
     flexDirection: 'row',

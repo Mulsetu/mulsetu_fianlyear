@@ -1,3 +1,4 @@
+import AdminAiManualQueue from '@/components/AdminAiManualQueue';
 import { Colors } from '@/constants/theme';
 import { getResponsiveDimensions, isDesktop } from '@/utils/responsive';
 import { Ionicons } from '@expo/vector-icons';
@@ -334,6 +335,8 @@ export default function AdminScreen() {
                   <Text style={styles.settingValueText}>Disabled</Text>
                 </View>
               </View>
+
+              <AdminAiManualQueue />
             </View>
           )}
         </View>

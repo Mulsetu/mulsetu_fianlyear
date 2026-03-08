@@ -30,6 +30,12 @@ export default function RootLayout() {
     if (Platform.OS !== 'web') return;
     if (!('serviceWorker' in navigator)) return;
 
+    const host = window.location.hostname;
+    const isLocalhost = host === 'localhost' || host === '127.0.0.1';
+    if (isLocalhost) {
+      return;
+    }
+
     const register = () => {
       navigator.serviceWorker.register('/sw.js').catch((error) => {
         console.warn('Service worker registration failed:', error);
