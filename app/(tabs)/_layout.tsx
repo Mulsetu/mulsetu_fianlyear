@@ -1,14 +1,12 @@
 import { HapticTab } from '@/components/haptic-tab';
 import { Colors } from '@/constants/theme';
 import { useUser } from '@/contexts/UserContext';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { router, Tabs } from 'expo-router';
 import { Brain, Home, Search, Shield, ShoppingCart, Truck, Upload, User } from 'lucide-react-native';
 import React, { useEffect } from 'react';
 import { Platform, Text } from 'react-native';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
   const { user, isLoading } = useUser();
 
   // Redirect to sign-in if not authenticated
@@ -36,8 +34,14 @@ export default function TabLayout() {
 
   const activeColor = Colors.light.onSecondary; // white – selected tab
   const inactiveColor = 'rgba(255, 255, 255, 0.6)'; // dimmed – unselected tabs
-  const renderTabLabel = (label: string) => ({ color }: { color: string }) =>
-    <Text style={{ color, fontSize: 12, fontWeight: '500' }}>{label}</Text>;
+  const renderTabLabel = (label: string) => {
+    const TabLabel = ({ color }: { color: string }) => (
+      <Text style={{ color, fontSize: 12, fontWeight: '500' }}>{label}</Text>
+    );
+
+    TabLabel.displayName = `${label.replace(/\s+/g, '')}TabLabel`;
+    return TabLabel;
+  };
 
   return (
     <Tabs
@@ -45,7 +49,7 @@ export default function TabLayout() {
         tabBarActiveTintColor: activeColor,
         tabBarInactiveTintColor: inactiveColor,
         headerShown: false,
-        tabBarButton: HapticTab,
+        tabBarButton: Platform.OS === 'ios' ? HapticTab : undefined,
         tabBarShowLabel: true,
         tabBarLabelStyle: {
           fontSize: 12,

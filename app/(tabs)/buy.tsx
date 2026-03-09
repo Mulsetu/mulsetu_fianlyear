@@ -101,7 +101,7 @@ export default function BuyProduceScreen() {
   const [showProduceDropdown, setShowProduceDropdown] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedListingForDetail, setSelectedListingForDetail] = useState<Listing | null>(null);
-  const [listingOffers, setListingOffers] = useState<Array<{ buyer_name: string; quantity: number; price_per_quintal: number; total_amount: number; status: string; created_at: string }>>([]);
+  const [listingOffers, setListingOffers] = useState<{ buyer_name: string; quantity: number; price_per_quintal: number; total_amount: number; status: string; created_at: string }[]>([]);
   const [loadingListingOffers, setLoadingListingOffers] = useState(false);
   const [showRecommendationModal, setShowRecommendationModal] = useState(false);
   const [recommendationForListing, setRecommendationForListing] = useState<RecommendationResult | null>(null);

@@ -1,7 +1,6 @@
 import { useUser } from '@/contexts/UserContext';
 import { authStyles } from '@/styles/authStyles';
 import { supabase } from '@/utils/supabaseClient';
-import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Link, router } from 'expo-router';
 import React, { useState } from 'react';

@@ -12,11 +12,6 @@ export default function HomeScreen() {
   const { user } = useUser();
   const isTrader = user?.userType === 'Trader';
   const { containerMaxWidth } = getResponsiveDimensions();
-  const newsItems = [
-    { id: '1', text: '🥭 Mango ₹3000/qtl in Pune ↑', up: true },
-    { id: '2', text: '🧅 Onion ₹1800/qtl in Nashik ↓', up: false },
-    { id: '3', text: '🍅 Tomato ₹1500/qtl in Satara ↑', up: true },
-  ];
 
   // Highlight slider cards – live mandi prices for fruits (filtered by user's chosen mandi/commodity)
   const highlightCards = [
@@ -68,10 +63,6 @@ export default function HomeScreen() {
     { id: 't3', title: 'Tomato steady', tip: 'Plan transport to Pune', up: true },
   ];
 
-  const tips = [
-    { id: 'fp1', title: 'Post-harvest care', sub: 'Keep onions dry and ventilated', image: 'https://images.unsplash.com/photo-1601004890684-d8cbf643f5f2?q=80&w=1200&auto=format&fit=crop' },
-    { id: 'fp2', title: 'Water scheduling', sub: 'Irrigate grapes in morning', image: 'https://images.unsplash.com/photo-1543352634-87392b1f5b6b?q=80&w=1200&auto=format&fit=crop' },
-  ];
 
   // Central agriculture schemes – Govt Scheme Updates (Farmer dashboard)
   const centralAgricultureSchemes = [
@@ -107,7 +98,7 @@ export default function HomeScreen() {
   // Leaderboard modal (bids on a listing)
   const [showLeaderboardModal, setShowLeaderboardModal] = useState(false);
   const [leaderboardProduce, setLeaderboardProduce] = useState('');
-  const [leaderboardOffers, setLeaderboardOffers] = useState<Array<{ buyer_name: string; quantity: number; price_per_quintal: number; total_amount: number; status: string }>>([]);
+  const [leaderboardOffers, setLeaderboardOffers] = useState<{ buyer_name: string; quantity: number; price_per_quintal: number; total_amount: number; status: string }[]>([]);
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
   const [showSchemesModal, setShowSchemesModal] = useState(false);
 
@@ -234,7 +225,7 @@ export default function HomeScreen() {
   const [insightsOffset, setInsightsOffset] = useState(0);
   const [currentFruitIndex, setCurrentFruitIndex] = useState(0);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
-  const [newsWidth, setNewsWidth] = useState(1);
+  const [newsWidth] = useState(1);
   const [insightsWidth, setInsightsWidth] = useState(1);
 
   useEffect(() => {

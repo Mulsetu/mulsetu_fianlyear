@@ -57,7 +57,7 @@ export default function RootLayout() {
     if (Platform.OS !== 'web') return;
 
     const handleBeforeInstallPrompt = (event: Event) => {
-      event.preventDefault();
+      // Keep a reference but do not block the browser banner globally.
       window.__mulsetuDeferredInstallPrompt = event as DeferredInstallPromptEvent;
     };
 

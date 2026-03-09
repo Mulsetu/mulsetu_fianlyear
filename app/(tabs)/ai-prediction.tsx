@@ -5,10 +5,11 @@ import { getResponsiveDimensions, isDesktop } from '@/utils/responsive';
 import { fetchAllStateMarkets } from '@/utils/stateMarketImport';
 import { supabase } from '@/utils/supabaseClient';
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Modal,
+    Platform,
     SafeAreaView,
     ScrollView,
     StatusBar,
@@ -25,6 +26,20 @@ type PredictionPoint = {
 };
 
 type ManualQueueStatus = 'pending' | 'completed' | 'failed';
+type ScreenMode = 'prediction' | 'history';
+
+type PredictionHistoryRow = {
+  id: string;
+  crop: string;
+  mandi: string;
+  horizon: Horizon;
+  response_json: any;
+  created_at: string;
+};
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function buildLocalFallbackPredictions(crop: string): PredictionPoint[] {
   const base = 2500 + (crop.length % 11) * 95;
@@ -86,6 +101,10 @@ export default function AiPredictionScreen() {
   const [nearbyMandis, setNearbyMandis] = useState<AiNearbyMandi[]>([]);
   const [activeRequestId, setActiveRequestId] = useState<string>('');
   const [queueStatus, setQueueStatus] = useState<ManualQueueStatus | ''>('');
+  const [screenMode, setScreenMode] = useState<ScreenMode>('prediction');
+  const [historyRows, setHistoryRows] = useState<PredictionHistoryRow[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState('');
   
   // Mandi selection state
   const [markets, setMarkets] = useState<{ market_name: string; state_name: string }[]>([]);
@@ -94,55 +113,74 @@ export default function AiPredictionScreen() {
   const [mandiModalVisible, setMandiModalVisible] = useState(false);
   const [mandiSearch, setMandiSearch] = useState('');
 
-  // Load fruits from Supabase (fruit_commodities)
-  useEffect(() => {
-    const loadFruits = async () => {
-      try {
-        setIsLoadingFruits(true);
+  const loadFruits = async () => {
+    try {
+      setIsLoadingFruits(true);
+      let lastError: unknown;
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
         const { data, error } = await supabase
           .from('fruit_commodities')
           .select('commodity_name')
           .order('commodity_name', { ascending: true });
 
-        if (error) {
-          console.error('Error loading fruits for AI Prediction:', error);
-          setFruits([]);
+        if (!error) {
+          const names =
+            (data ?? [])
+              .map((row: any) => row.commodity_name as string | null)
+              .filter((n): n is string => !!n) ?? [];
+
+          setFruits(names);
+          if (names.length > 0) {
+            setSelectedFruit((prev) => prev || names[0]);
+          }
           return;
         }
 
-        const names =
-          (data ?? [])
-            .map((row: any) => row.commodity_name as string | null)
-            .filter((n): n is string => !!n) ?? [];
-
-        setFruits(names);
-        if (names.length > 0) {
-          setSelectedFruit((prev) => prev || names[0]);
+        lastError = error;
+        if (attempt < 3) {
+          await wait(250 * Math.pow(2, attempt - 1));
         }
-      } finally {
-        setIsLoadingFruits(false);
       }
-    };
 
+      console.error('Error loading fruits for AI Prediction:', lastError);
+      setFruits([]);
+    } finally {
+      setIsLoadingFruits(false);
+    }
+  };
+
+  const loadMarkets = async () => {
+    try {
+      setLoadingMarkets(true);
+      const data = await fetchAllStateMarkets();
+      setMarkets(data);
+    } catch (err) {
+      console.error('Error loading markets from state_market_import:', err);
+      setMarkets([]);
+    } finally {
+      setLoadingMarkets(false);
+    }
+  };
+
+  // Load fruits from Supabase (fruit_commodities)
+  useEffect(() => {
     loadFruits();
   }, []);
 
   // Load markets from state_market_import (full list, paginated past 1000 rows)
   useEffect(() => {
-    const loadMarkets = async () => {
-      try {
-        setLoadingMarkets(true);
-        const data = await fetchAllStateMarkets();
-        setMarkets(data);
-      } catch (err) {
-        console.error('Error loading markets from state_market_import:', err);
-        setMarkets([]);
-      } finally {
-        setLoadingMarkets(false);
-      }
-    };
-
     loadMarkets();
+  }, []);
+
+  // Soft refresh background data periodically so users don't need manual reload.
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      loadFruits();
+      loadMarkets();
+    }, 60000);
+
+    return () => clearInterval(intervalId);
   }, []);
 
   // Set initial mandi from user profile
@@ -162,6 +200,125 @@ export default function AiPredictionScreen() {
       })),
     [markets, selectedMandi],
   );
+
+  const applyPredictionPayload = (
+    payload: any,
+    payloadHorizon: Horizon,
+    payloadMandi: string,
+  ): boolean => {
+    if (!payload || !Array.isArray(payload.predictions) || payload.predictions.length === 0) {
+      return false;
+    }
+
+    const parsedPredictions: PredictionPoint[] = payload.predictions.map((item: any, index: number) => ({
+      dayLabel: typeof item?.dayLabel === 'string' ? item.dayLabel : (index === 0 ? 'Tomorrow' : `Day ${index + 1}`),
+      price: Number.isFinite(item?.price) ? Math.max(1, Math.round(item.price)) : 0,
+    }));
+
+    const parsedNearby: AiNearbyMandi[] = Array.isArray(payload.nearbyMandis)
+      ? payload.nearbyMandis.map((item: any) => ({
+        name: typeof item?.name === 'string' ? item.name : 'Nearby mandi',
+        distanceKm: Number.isFinite(item?.distanceKm) ? Math.max(0, Math.round(item.distanceKm)) : 0,
+        targetPrice: Number.isFinite(item?.targetPrice)
+          ? Math.max(1, Math.round(item.targetPrice))
+          : parsedPredictions[0].price,
+        extraPerQtl: Number.isFinite(item?.extraPerQtl) ? Math.round(item.extraPerQtl) : 0,
+        netProfit: Number.isFinite(item?.netProfit) ? Math.round(item.netProfit) : 0,
+        worthIt: Boolean(item?.worthIt),
+        reason: typeof item?.reason === 'string' ? item.reason : undefined,
+      }))
+      : [];
+
+    const horizonPredictions = payloadHorizon === '1D' ? parsedPredictions.slice(0, 1) : parsedPredictions;
+    setPredictions(horizonPredictions);
+    setNearbyMandis(parsedNearby);
+    setBaseMandiName(typeof payload.baseMandi === 'string' ? payload.baseMandi : payloadMandi);
+    setPredictionSummary(typeof payload.summary === 'string' ? payload.summary : 'Manual AI response loaded.');
+    setPredictionModel(typeof payload.model === 'string' ? payload.model : 'manual-admin');
+    setPredictionError('');
+    return true;
+  };
+
+  const loadPredictionHistory = useCallback(async () => {
+    try {
+      setIsLoadingHistory(true);
+      setHistoryError('');
+
+      let query = supabase
+        .from('ai_prediction_manual_requests')
+        .select('id, crop, mandi, horizon, response_json, created_at, status')
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false })
+        .limit(25);
+
+      if (selectedFruit) {
+        query = query.eq('crop', selectedFruit);
+      }
+
+      if (selectedMandi) {
+        query = query.eq('mandi', selectedMandi);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        throw error;
+      }
+
+      const rows = (data ?? [])
+        .filter((row: any) => row?.response_json && Array.isArray(row.response_json.predictions))
+        .map((row: any) => ({
+          id: String(row.id),
+          crop: String(row.crop ?? ''),
+          mandi: String(row.mandi ?? ''),
+          horizon: row.horizon === '7D' ? '7D' : '1D',
+          response_json: row.response_json,
+          created_at: String(row.created_at ?? ''),
+        } as PredictionHistoryRow));
+
+      setHistoryRows(rows);
+    } catch (error) {
+      console.error('Error loading AI prediction history:', error);
+      setHistoryRows([]);
+      setHistoryError(error instanceof Error ? error.message : 'Failed to load history');
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [selectedFruit, selectedMandi]);
+
+  const handleUseHistory = (item: PredictionHistoryRow) => {
+    const ok = applyPredictionPayload(item.response_json, item.horizon, item.mandi);
+    if (!ok) {
+      setPredictionError('Saved history item is invalid.');
+      return;
+    }
+
+    setSelectedFruit(item.crop);
+    setSelectedMandi(item.mandi);
+    setHorizon(item.horizon);
+    setQueueStatus('completed');
+    setActiveRequestId('');
+    setIsLoadingPrediction(false);
+    setScreenMode('prediction');
+  };
+
+  const formatHistoryDate = (iso: string): string => {
+    if (!iso) {
+      return 'Unknown time';
+    }
+
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) {
+      return 'Unknown time';
+    }
+
+    return date.toLocaleString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
 
   const handleCheckPrediction = async () => {
     if (!selectedFruit || !selectedMandi) {
@@ -207,7 +364,7 @@ export default function AiPredictionScreen() {
       setActiveRequestId(data.id);
       setPredictions([]);
       setNearbyMandis([]);
-      setPredictionSummary('Request sent to admin queue. Admin will paste Gemini output soon.');
+      setPredictionSummary('');
       setPredictionModel('manual-queue');
       setBaseMandiName(selectedMandi || user?.market || 'Your mandi');
     } catch (error) {
@@ -220,8 +377,6 @@ export default function AiPredictionScreen() {
       setPredictionModel('local-fallback');
       setBaseMandiName(selectedMandi || user?.market || 'Your mandi');
       setNearbyMandis(fallbackNearby);
-    } finally {
-      setIsLoadingPrediction(false);
     }
   };
 
@@ -245,9 +400,10 @@ export default function AiPredictionScreen() {
       setQueueStatus(status);
 
       if (status === 'failed') {
-        setPredictionError(data.admin_note || 'Admin marked request as failed.');
-        setPredictionSummary('Admin queue failed for this request.');
+        setPredictionError(data.admin_note || 'Prediction request failed.');
+        setPredictionSummary('');
         setPredictionModel('manual-queue-failed');
+        setIsLoadingPrediction(false);
         setActiveRequestId('');
         return;
       }
@@ -257,45 +413,32 @@ export default function AiPredictionScreen() {
       }
 
       const payload = data.response_json as any;
-      if (!payload || !Array.isArray(payload.predictions) || payload.predictions.length === 0) {
-        setPredictionError('Admin response JSON is invalid.');
-        setPredictionSummary('Received invalid response from admin queue.');
+      const ok = applyPredictionPayload(payload, horizon, selectedMandi);
+      if (!ok) {
+        setPredictionError('Prediction data is invalid.');
+        setPredictionSummary('');
         setPredictionModel('manual-queue-invalid');
+        setIsLoadingPrediction(false);
         setActiveRequestId('');
         return;
       }
-
-      const parsedPredictions: PredictionPoint[] = payload.predictions.map((item: any, index: number) => ({
-        dayLabel: typeof item?.dayLabel === 'string' ? item.dayLabel : (index === 0 ? 'Tomorrow' : `Day ${index + 1}`),
-        price: Number.isFinite(item?.price) ? Math.max(1, Math.round(item.price)) : 0,
-      }));
-
-      const parsedNearby: AiNearbyMandi[] = Array.isArray(payload.nearbyMandis)
-        ? payload.nearbyMandis.map((item: any) => ({
-          name: typeof item?.name === 'string' ? item.name : 'Nearby mandi',
-          distanceKm: Number.isFinite(item?.distanceKm) ? Math.max(0, Math.round(item.distanceKm)) : 0,
-          targetPrice: Number.isFinite(item?.targetPrice) ? Math.max(1, Math.round(item.targetPrice)) : parsedPredictions[0].price,
-          extraPerQtl: Number.isFinite(item?.extraPerQtl) ? Math.round(item.extraPerQtl) : 0,
-          netProfit: Number.isFinite(item?.netProfit) ? Math.round(item.netProfit) : 0,
-          worthIt: Boolean(item?.worthIt),
-          reason: typeof item?.reason === 'string' ? item.reason : undefined,
-        }))
-        : [];
-
-      const horizonPredictions = horizon === '1D' ? parsedPredictions.slice(0, 1) : parsedPredictions;
-      setPredictions(horizonPredictions);
-      setNearbyMandis(parsedNearby);
-      setBaseMandiName(typeof payload.baseMandi === 'string' ? payload.baseMandi : selectedMandi);
-      setPredictionSummary(typeof payload.summary === 'string' ? payload.summary : 'Manual AI response loaded.');
-      setPredictionModel(typeof payload.model === 'string' ? payload.model : 'manual-admin');
-      setPredictionError('');
+      setIsLoadingPrediction(false);
       setActiveRequestId('');
+      loadPredictionHistory();
     };
 
     pollRequest();
-    const intervalId = setInterval(pollRequest, 5000);
+    const intervalId = setInterval(pollRequest, 1500);
     return () => clearInterval(intervalId);
-  }, [activeRequestId, horizon, selectedMandi]);
+  }, [activeRequestId, horizon, loadPredictionHistory, selectedMandi]);
+
+  useEffect(() => {
+    if (screenMode !== 'history') {
+      return;
+    }
+
+    loadPredictionHistory();
+  }, [loadPredictionHistory, screenMode]);
 
   const filteredMarkets = markets.filter((m) => {
     const label = `${m.market_name}${m.state_name ? ` (${m.state_name})` : ''}`;
@@ -330,10 +473,91 @@ export default function AiPredictionScreen() {
             <Text style={styles.subtitle}>
               See tomorrow&apos;s price and plan the best mandi for maximum profit.
             </Text>
+            <View style={styles.screenModeToggle}>
+              <TouchableOpacity
+                style={[styles.screenModeChip, screenMode === 'prediction' && styles.screenModeChipActive]}
+                onPress={() => setScreenMode('prediction')}
+              >
+                <Text style={[styles.screenModeChipText, screenMode === 'prediction' && styles.screenModeChipTextActive]}>
+                  Prediction
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.screenModeChip, screenMode === 'history' && styles.screenModeChipActive]}
+                onPress={() => setScreenMode('history')}
+              >
+                <Text style={[styles.screenModeChipText, screenMode === 'history' && styles.screenModeChipTextActive]}>
+                  History
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
-          {/* Input Selectors */}
-          <View style={styles.card}>
+          {screenMode === 'history' ? (
+            <View style={styles.card}>
+              <View style={styles.historyTopRow}>
+                <Text style={styles.sectionTitle}>Prediction History</Text>
+                <TouchableOpacity onPress={loadPredictionHistory}>
+                  <Text style={styles.historyRefreshText}>Refresh</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.cardSubtitle}>
+                Showing recent completed predictions
+                {selectedFruit ? ` for ${selectedFruit}` : ''}
+                {selectedMandi ? ` in ${selectedMandi}` : ''}.
+              </Text>
+
+              {isLoadingHistory && (
+                <View style={{ alignItems: 'center', paddingVertical: 10 }}>
+                  <ActivityIndicator size="small" color={Colors.light.primary} />
+                  <Text style={styles.infoText}>Loading saved predictions...</Text>
+                </View>
+              )}
+
+              {!isLoadingHistory && !!historyError && (
+                <Text style={styles.infoText}>Failed to load history: {historyError}</Text>
+              )}
+
+              {!isLoadingHistory && !historyError && historyRows.length === 0 && (
+                <Text style={styles.infoText}>
+                  No completed prediction history found yet.
+                </Text>
+              )}
+
+              {!isLoadingHistory && !historyError && historyRows.map((item) => {
+                const topPrice = Array.isArray(item.response_json?.predictions)
+                  ? Math.round(item.response_json.predictions[0]?.price ?? 0)
+                  : 0;
+
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.historyRow}
+                    onPress={() => handleUseHistory(item)}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.historyCropText}>{item.crop} | {item.mandi}</Text>
+                      <Text style={styles.historyMetaText}>
+                        {item.horizon} | {formatHistoryDate(item.created_at)}
+                      </Text>
+                      <Text style={styles.historyMetaText} numberOfLines={2}>
+                        {typeof item.response_json?.summary === 'string'
+                          ? item.response_json.summary
+                          : 'Tap to load this prediction'}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end', marginLeft: 10 }}>
+                      <Text style={styles.historyPriceText}>₹{topPrice}/qtl</Text>
+                      <Ionicons name="arrow-forward-circle-outline" size={18} color={Colors.light.primary} />
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : (
+            <>
+              {/* Input Selectors */}
+              <View style={styles.card}>
             <Text style={styles.sectionTitle}>Select Inputs</Text>
             <Text style={styles.fieldLabel}>Crop Name</Text>
             <TouchableOpacity
@@ -403,10 +627,10 @@ export default function AiPredictionScreen() {
                 <Text style={styles.checkButtonText}>Check Prediction</Text>
               )}
             </TouchableOpacity>
-          </View>
+              </View>
 
-          {/* Prediction Horizon */}
-          <View style={styles.card}>
+              {/* Prediction Horizon */}
+              <View style={styles.card}>
             <View style={styles.horizonHeader}>
               <Text style={styles.sectionTitle}>Price Prediction</Text>
               <View style={styles.horizonToggle}>
@@ -432,7 +656,7 @@ export default function AiPredictionScreen() {
             {/* Summary Row */}
             <Text style={styles.cardSubtitle}>
               Showing forecast for <Text style={{ fontWeight: '700' }}>{selectedFruit || 'selected crop'}</Text>
-              {' '}in <Text style={{ fontWeight: '700' }}>{selectedMandi || 'selected mandi'}</Text>
+              {' in '}<Text style={{ fontWeight: '700' }}>{selectedMandi || 'selected mandi'}</Text>
             </Text>
             <View style={styles.summaryRow}>
               <View style={styles.summaryItem}>
@@ -457,6 +681,12 @@ export default function AiPredictionScreen() {
 
             {/* Simple bar chart style list */}
             <View style={styles.predictionList}>
+              {isLoadingPrediction && (
+                <View style={{ alignItems: 'center', paddingVertical: 10 }}>
+                  <ActivityIndicator size="small" color={Colors.light.primary} />
+                  <Text style={styles.infoText}>Loading prediction...</Text>
+                </View>
+              )}
               {predictions.length === 0 && !isLoadingPrediction && (
                 <Text style={styles.infoText}>
                   Select crop and mandi, then tap Check Prediction to fetch AI forecast.
@@ -488,10 +718,10 @@ export default function AiPredictionScreen() {
               Model: {predictionModel || 'loading...'}
               {predictionError ? ` | Warning: ${predictionError}` : ''}
             </Text>
-          </View>
+              </View>
 
-          {/* Profit Check Section */}
-          <View style={styles.card}>
+              {/* Profit Check Section */}
+              <View style={styles.card}>
             <Text style={styles.sectionTitle}>Check Profit by Mandi</Text>
             <Text style={styles.cardSubtitle}>
               Compare your mandi with nearby mandis based on predicted prices.
@@ -515,7 +745,7 @@ export default function AiPredictionScreen() {
               {selectedMandi && (
                 <Text style={styles.baseMandiPrice}>
                   {baseMandiName ? `${baseMandiName} | ` : ''}
-                  Tomorrow&apos;s predicted price:{' '}
+                  Tomorrow&apos;s predicted price: 
                   <Text style={{ fontWeight: '700' }}>₹{basePrice}/qtl</Text>
                 </Text>
               )}
@@ -564,7 +794,9 @@ export default function AiPredictionScreen() {
               Nearby mandi comparison is generated from the same AI response using your selected
               crop and mandi.
             </Text>
-          </View>
+              </View>
+            </>
+          )}
         </View>
       </ScrollView>
 
@@ -738,6 +970,31 @@ const styles = StyleSheet.create({
     color: Colors.light.icon,
     fontFamily: 'System',
   },
+  screenModeToggle: {
+    marginTop: 12,
+    flexDirection: 'row',
+    borderRadius: 999,
+    backgroundColor: Colors.light.inputBackground,
+    padding: 3,
+    alignSelf: 'flex-start',
+  },
+  screenModeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  screenModeChipActive: {
+    backgroundColor: Colors.light.primary,
+  },
+  screenModeChipText: {
+    fontSize: 12,
+    color: Colors.light.text,
+    fontFamily: 'System',
+    fontWeight: '600',
+  },
+  screenModeChipTextActive: {
+    color: 'white',
+  },
   card: {
     backgroundColor: Colors.light.background,
     borderRadius: 16,
@@ -745,11 +1002,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: Colors.light.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    ...(Platform.OS === 'web'
+      ? ({ boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.05)' } as any)
+      : {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+      }),
   },
   sectionTitle: {
     fontSize: isDesktop ? 20 : 18,
@@ -919,6 +1180,47 @@ const styles = StyleSheet.create({
     color: Colors.light.icon,
     marginBottom: 10,
     fontFamily: 'System',
+  },
+  historyTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  historyRefreshText: {
+    color: Colors.light.primary,
+    fontWeight: '700',
+    fontSize: 12,
+    fontFamily: 'System',
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+    backgroundColor: Colors.light.inputBackground,
+  },
+  historyCropText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.light.text,
+    fontFamily: 'System',
+    marginBottom: 2,
+  },
+  historyMetaText: {
+    fontSize: 12,
+    color: Colors.light.icon,
+    fontFamily: 'System',
+    marginTop: 2,
+  },
+  historyPriceText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.light.text,
+    fontFamily: 'System',
+    marginBottom: 4,
   },
   baseMandiCard: {
     backgroundColor: Colors.light.inputBackground,

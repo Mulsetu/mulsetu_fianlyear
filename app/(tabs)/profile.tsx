@@ -30,7 +30,7 @@ export default function ProfileScreen() {
   const [editPhone, setEditPhone] = useState(user?.phone || '');
   const [editLocation, setEditLocation] = useState(user?.location || '');
   const [editMarket, setEditMarket] = useState(user?.market || '');
-  const [markets, setMarkets] = useState<Array<{ market_name: string; state_name: string }>>([]);
+  const [markets, setMarkets] = useState<{ market_name: string; state_name: string }[]>([]);
   const [loadingMarkets, setLoadingMarkets] = useState(false);
   const [marketSearch, setMarketSearch] = useState('');
   const [showMarketModal, setShowMarketModal] = useState(false);
@@ -84,7 +84,7 @@ export default function ProfileScreen() {
       const timer = setTimeout(() => {
         try {
           router.replace('/sign-in');
-        } catch (error) {
+        } catch {
           // Router might not be ready yet, ignore error
           console.log('Router not ready yet');
         }

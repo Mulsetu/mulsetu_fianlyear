@@ -1,7 +1,9 @@
 import AdminAiManualQueue from '@/components/AdminAiManualQueue';
 import { Colors } from '@/constants/theme';
+import { useUser } from '@/contexts/UserContext';
 import { getResponsiveDimensions, isDesktop } from '@/utils/responsive';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import React, { useState } from 'react';
 import {
     Alert,
@@ -103,6 +105,38 @@ const mockUsers: User[] = [
 export default function AdminScreen() {
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'settings'>('overview');
   const dimensions = getResponsiveDimensions();
+  const { logout } = useUser();
+
+  const handleLogout = async () => {
+    const doLogout = async () => {
+      try {
+        await logout();
+        router.replace('/sign-in');
+      } catch {
+        if (Platform.OS === 'web') {
+          window.alert('Failed to logout. Please try again.');
+        } else {
+          Alert.alert('Error', 'Failed to logout. Please try again.');
+        }
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm('Are you sure you want to logout?')) {
+        await doLogout();
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Logout', style: 'destructive', onPress: doLogout },
+      ]
+    );
+  };
 
   const handleUserAction = (userId: string, action: 'block' | 'unblock' | 'delete') => {
     Alert.alert(
@@ -219,8 +253,16 @@ export default function AdminScreen() {
         <View style={[styles.content, { maxWidth: dimensions.containerMaxWidth }]}>
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.title}>Admin Dashboard</Text>
-            <Text style={styles.subtitle}>Manage users and system settings</Text>
+            <View style={styles.headerTopRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.title}>Admin Dashboard</Text>
+                <Text style={styles.subtitle}>Manage users and system settings</Text>
+              </View>
+              <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+                <Ionicons name="log-out-outline" size={16} color="white" />
+                <Text style={styles.logoutButtonText}>Logout</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Tab Navigation */}
@@ -368,6 +410,11 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 24,
   },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   title: {
     fontSize: isDesktop ? 32 : 28,
     fontWeight: 'bold',
@@ -378,6 +425,21 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: isDesktop ? 18 : 16,
     color: Colors.light.icon,
+    fontFamily: 'System',
+  },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.light.error,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    gap: 6,
+  },
+  logoutButtonText: {
+    color: 'white',
+    fontSize: 13,
+    fontWeight: '700',
     fontFamily: 'System',
   },
   tabContainer: {

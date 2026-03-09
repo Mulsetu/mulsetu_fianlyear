@@ -51,7 +51,7 @@ export default function SignUpScreen() {
   const [showUserTypeModal, setShowUserTypeModal] = useState(false);
   const [showMarketModal, setShowMarketModal] = useState(false);
   const [showLanguageModal, setShowLanguageModal] = useState(false);
-  const [markets, setMarkets] = useState<Array<{ market_name: string; state_name: string }>>([]);
+  const [markets, setMarkets] = useState<{ market_name: string; state_name: string }[]>([]);
   const [loadingMarkets, setLoadingMarkets] = useState(true);
   const [marketSearch, setMarketSearch] = useState('');
   const deferredInstallPromptRef = useRef<DeferredInstallPromptEvent | null>(null);
@@ -67,7 +67,7 @@ export default function SignUpScreen() {
   }>({});
 
   // Registration should only allow self-signup for Farmer, Trader and Logistics Partner
-  const userTypes: Array<'Farmer' | 'Trader' | 'Logistics'> = ['Farmer', 'Trader', 'Logistics'];
+  const userTypes: ('Farmer' | 'Trader' | 'Logistics')[] = ['Farmer', 'Trader', 'Logistics'];
   const languages = ['English', 'Hindi', 'Marathi', 'Tamil', 'Telugu'];
 
   // Load markets from Supabase

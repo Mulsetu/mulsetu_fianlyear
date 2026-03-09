@@ -292,7 +292,7 @@ export default function SellProduceScreen() {
           address,
         },
       }));
-    } catch (e) {
+    } catch {
       Alert.alert('Error', 'Failed to get your location. Please try again.');
     } finally {
       setIsFetchingLocation(false);

@@ -2,7 +2,7 @@ import { supabase } from "@/utils/supabaseClient";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft } from "lucide-react-native";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Image, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import Svg, { G, Line, Rect, Text as SvgText } from "react-native-svg";
 
@@ -38,7 +38,6 @@ export default function PriceReportScreen() {
     const [timeSeriesData, setTimeSeriesData] = useState<PriceDataPoint[]>([]);
     const [comparisonBars, setComparisonBars] = useState<ComparisonBar[]>([]);
     const [nearbyMandis, setNearbyMandis] = useState<NearbyMandi[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
     const [isLoadingPrices, setIsLoadingPrices] = useState(false);
 
     // State + Market options derived from price data for this commodity
@@ -182,13 +181,56 @@ export default function PriceReportScreen() {
         fetchCommodityId();
     }, [crop]);
 
-    // Fetch price data when filters change
-    useEffect(() => {
-        if (!commodityId) return;
-        fetchPriceData();
-    }, [commodityId, selectedState, selectedMandi]);
+    const fetchNearbyMandisPrices = useCallback(async (priceData: any[]) => {
+        if (!selectedState || markets.length === 0) {
+            setNearbyMandis([]);
+            return;
+        }
 
-    const fetchPriceData = async () => {
+        // Use the most recent date available in the filtered price data
+        let latestDate: string | null = null;
+        for (const row of priceData) {
+            if (!latestDate || row.date > latestDate) {
+                latestDate = row.date;
+            }
+        }
+
+        if (!latestDate) {
+            setNearbyMandis([]);
+            return;
+        }
+
+        const todayData = priceData.filter((p: any) => p.date === latestDate);
+
+        const mandisList: NearbyMandi[] = [];
+        const marketsToShow = markets.slice(0, 5);
+
+        marketsToShow.forEach((mandiName) => {
+            // Match market by name (flexible matching)
+            const mandiPriceData = todayData.filter((p: any) => {
+                const marketName = p.market_name.toLowerCase();
+                const mandiLower = mandiName.toLowerCase();
+
+                return marketName.includes(mandiLower) || mandiLower.includes(marketName);
+            });
+
+            if (mandiPriceData.length > 0) {
+                const avgPrice = mandiPriceData.reduce((sum, p) => sum + p.modal_price, 0) / mandiPriceData.length;
+                mandisList.push({
+                    name: mandiName,
+                    price: Math.round(avgPrice),
+                    distance: Math.round(5 + Math.random() * 45), // Mock distance
+                    isSelected: mandiName === selectedMandi,
+                });
+            }
+        });
+
+        // Sort by price (highest first)
+        mandisList.sort((a, b) => b.price - a.price);
+        setNearbyMandis(mandisList);
+    }, [markets, selectedMandi, selectedState]);
+
+    const fetchPriceData = useCallback(async () => {
         if (!commodityId) return;
         
         setIsLoadingPrices(true);
@@ -360,58 +402,14 @@ export default function PriceReportScreen() {
             console.error('Error fetching prices:', err);
         } finally {
             setIsLoadingPrices(false);
-            setIsLoading(false);
         }
-    };
+    }, [commodityId, fetchNearbyMandisPrices, selectedMandi, selectedState]);
 
-    const fetchNearbyMandisPrices = async (priceData: any[]) => {
-        if (!selectedState || markets.length === 0) {
-            setNearbyMandis([]);
-            return;
-        }
-
-        // Use the most recent date available in the filtered price data
-        let latestDate: string | null = null;
-        for (const row of priceData) {
-            if (!latestDate || row.date > latestDate) {
-                latestDate = row.date;
-            }
-        }
-
-        if (!latestDate) {
-            setNearbyMandis([]);
-            return;
-        }
-
-        const todayData = priceData.filter((p: any) => p.date === latestDate);
-
-        const mandisList: NearbyMandi[] = [];
-        const marketsToShow = markets.slice(0, 5);
-
-        marketsToShow.forEach((mandiName) => {
-            // Match market by name (flexible matching)
-            const mandiPriceData = todayData.filter((p: any) => {
-                const marketName = p.market_name.toLowerCase();
-                const mandiLower = mandiName.toLowerCase();
-                
-                return marketName.includes(mandiLower) || mandiLower.includes(marketName);
-            });
-
-            if (mandiPriceData.length > 0) {
-                const avgPrice = mandiPriceData.reduce((sum, p) => sum + p.modal_price, 0) / mandiPriceData.length;
-                mandisList.push({
-                    name: mandiName,
-                    price: Math.round(avgPrice),
-                    distance: Math.round(5 + Math.random() * 45), // Mock distance
-                    isSelected: mandiName === selectedMandi,
-                });
-            }
-        });
-
-        // Sort by price (highest first)
-        mandisList.sort((a, b) => b.price - a.price);
-        setNearbyMandis(mandisList);
-    };
+    // Fetch price data when filters change
+    useEffect(() => {
+        if (!commodityId) return;
+        fetchPriceData();
+    }, [commodityId, fetchPriceData]);
 
     const prices = comparisonBars.length
         ? comparisonBars.map(b => b.value)
@@ -419,8 +417,6 @@ export default function PriceReportScreen() {
     const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
     const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
     const avgPrice = prices.length > 0 ? Math.round(prices.reduce((a, b) => a + b, 0) / prices.length) : 0;
-
-    const cropImageUri = `https://source.unsplash.com/seed/${encodeURIComponent(String(crop ?? "crop"))}/400x300/?farm,produce`;
 
     const handleStateSelect = (stateName: string) => {
         setSelectedState(stateName);
