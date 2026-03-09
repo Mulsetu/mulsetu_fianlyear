@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { ArrowDown, ArrowUp, Bell, MapPin } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, Bell } from 'lucide-react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Linking, Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,6 +12,17 @@ export default function HomeScreen() {
   const { user } = useUser();
   const isTrader = user?.userType === 'Trader';
   const { containerMaxWidth } = getResponsiveDimensions();
+  const displayName = user?.name?.trim() || 'User';
+  const displayLocation = user?.location?.trim()
+    || user?.market?.trim()
+    || [user?.district, user?.state].filter(Boolean).join(', ')
+    || 'Location not set';
+  const userInitials = displayName
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('');
 
   // Highlight slider cards – live mandi prices for fruits (filtered by user's chosen mandi/commodity)
   const highlightCards = [
@@ -298,16 +309,97 @@ export default function HomeScreen() {
         }}
       >
         <View style={{ width: '100%', maxWidth: typeof containerMaxWidth === 'number' ? containerMaxWidth : 480 }}>
-        {/* Header bar – single line: title, location, bell */}
-        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text style={{ fontSize: 20, fontWeight: '800', color: '#19696c' }}>Mulsetu</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginHorizontal: 12, minWidth: 0 }}>
-            <MapPin color="#6b7280" size={14} />
-            <Text style={{ marginLeft: 4, fontSize: 12, color: '#6b7280', flex: 1 }} numberOfLines={1}>Nashik, Maharashtra</Text>
+        {/* Header bar - profile on left, Mulsetu logo centered */}
+        <View
+          style={{
+            paddingHorizontal: 16,
+            paddingTop: 8,
+            paddingBottom: 12,
+            borderBottomWidth: 1,
+            borderBottomColor: '#e5e7eb',
+            position: 'relative',
+            minHeight: 72,
+            justifyContent: 'center',
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', maxWidth: '58%' }}>
+            {user?.avatar ? (
+              <Image
+                source={{ uri: user.avatar }}
+                style={{ width: 38, height: 38, borderRadius: 19, marginRight: 10, borderWidth: 1, borderColor: '#d1d5db' }}
+              />
+            ) : (
+              <View
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 19,
+                  marginRight: 10,
+                  backgroundColor: '#19696c',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '800' }}>{userInitials || 'U'}</Text>
+              </View>
+            )}
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }} numberOfLines={1}>
+                {displayName}
+              </Text>
+              <Text style={{ marginTop: 2, fontSize: 12, fontWeight: '500', color: '#6b7280' }} numberOfLines={1}>
+                {displayLocation}
+              </Text>
+            </View>
           </View>
-          <TouchableOpacity activeOpacity={0.8}>
-            <Bell color="#19696c" size={24} />
-          </TouchableOpacity>
+
+          <View
+            style={{
+              position: 'absolute',
+              right: 16,
+              top: 0,
+              bottom: 0,
+              justifyContent: 'center',
+            }}
+          >
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: '#f3f4f6',
+                borderWidth: 1,
+                borderColor: '#e5e7eb',
+              }}
+            >
+              <Bell color="#19696c" size={18} />
+            </TouchableOpacity>
+          </View>
+
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              top: 0,
+              bottom: 0,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Image
+                source={require('../../assets/images/mulsetu_logo.png')}
+                resizeMode="contain"
+                style={{ width: 34, height: 34, marginRight: 8 }}
+              />
+              <Text style={{ fontSize: 24, fontWeight: '800', color: '#19696c' }}>Mulsetu</Text>
+            </View>
+          </View>
         </View>
 
         {/* Highlight slider: live mandi prices with fruit images and names */}
@@ -741,63 +833,65 @@ export default function HomeScreen() {
           </View>
         </Modal>
 
-        {/* Market Trend Insights */}
-        <View style={{ marginTop: 28, paddingHorizontal: 16, marginBottom: 24 }}>
-          <Text style={{ marginBottom: 16, fontSize: 20, fontWeight: '800', color: '#19696c' }}>Market Trend Insights</Text>
-          <ScrollView ref={insightsRef} horizontal showsHorizontalScrollIndicator={false}
-            scrollEnabled={false}
-            contentContainerStyle={{ paddingRight: 4 }}
-            onContentSizeChange={(w) => setInsightsWidth(w / 2)}>
-            {[...trendTips, ...trendTips].map((t, idx) => (
-              <View
-                key={`${t.id}-${idx}`}
-                style={{
-                  marginRight: 14,
-                  borderRadius: 18,
-                  backgroundColor: '#ffffff',
-                  elevation: 4,
-                  shadowColor: '#000',
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.1,
-                  shadowRadius: 6,
-                  overflow: 'hidden',
-                  borderWidth: 1,
-                  borderColor: '#e5e7eb',
-                }}
-              >
+        {/* Market Trend Insights - trader only */}
+        {isTrader && (
+          <View style={{ marginTop: 28, paddingHorizontal: 16, marginBottom: 24 }}>
+            <Text style={{ marginBottom: 16, fontSize: 20, fontWeight: '800', color: '#19696c' }}>Market Trend Insights</Text>
+            <ScrollView ref={insightsRef} horizontal showsHorizontalScrollIndicator={false}
+              scrollEnabled={false}
+              contentContainerStyle={{ paddingRight: 4 }}
+              onContentSizeChange={(w) => setInsightsWidth(w / 2)}>
+              {[...trendTips, ...trendTips].map((t, idx) => (
                 <View
+                  key={`${t.id}-${idx}`}
                   style={{
-                    backgroundColor: '#19696c',
-                    paddingHorizontal: 14,
-                    paddingVertical: 10,
+                    marginRight: 14,
+                    borderRadius: 18,
+                    backgroundColor: '#ffffff',
+                    elevation: 4,
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.1,
+                    shadowRadius: 6,
+                    overflow: 'hidden',
+                    borderWidth: 1,
+                    borderColor: '#e5e7eb',
                   }}
                 >
-                  <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 15, letterSpacing: 0.2 }}>
-                    {t.title}
-                  </Text>
-                </View>
-                <View style={{ padding: 14 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View
-                      style={{
-                        backgroundColor: t.up ? 'rgba(96, 148, 26, 0.15)' : 'rgba(229, 57, 53, 0.15)',
-                        paddingHorizontal: 6,
-                        paddingVertical: 4,
-                        borderRadius: 6,
-                        marginRight: 10,
-                      }}
-                    >
-                      {t.up ? <ArrowUp color="#60941a" size={18} /> : <ArrowDown color="#E53935" size={18} />}
-                    </View>
-                    <Text style={{ flex: 1, color: '#374151', fontSize: 14, fontWeight: '500', lineHeight: 20 }}>
-                      {t.tip}
+                  <View
+                    style={{
+                      backgroundColor: '#19696c',
+                      paddingHorizontal: 14,
+                      paddingVertical: 10,
+                    }}
+                  >
+                    <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 15, letterSpacing: 0.2 }}>
+                      {t.title}
                     </Text>
                   </View>
+                  <View style={{ padding: 14 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View
+                        style={{
+                          backgroundColor: t.up ? 'rgba(96, 148, 26, 0.15)' : 'rgba(229, 57, 53, 0.15)',
+                          paddingHorizontal: 6,
+                          paddingVertical: 4,
+                          borderRadius: 6,
+                          marginRight: 10,
+                        }}
+                      >
+                        {t.up ? <ArrowUp color="#60941a" size={18} /> : <ArrowDown color="#E53935" size={18} />}
+                      </View>
+                      <Text style={{ flex: 1, color: '#374151', fontSize: 14, fontWeight: '500', lineHeight: 20 }}>
+                        {t.tip}
+                      </Text>
+                    </View>
+                  </View>
                 </View>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
         {/* Govt Scheme Updates – hidden for Trader dashboard */}
         {!isTrader && (

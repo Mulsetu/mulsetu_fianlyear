@@ -5,11 +5,13 @@ import { fetchAllStateMarkets } from '@/utils/stateMarketImport';
 import { supabase } from '@/utils/supabaseClient';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
     FlatList,
+  Image,
     Modal,
     Platform,
     SafeAreaView,
@@ -34,6 +36,7 @@ export default function ProfileScreen() {
   const [loadingMarkets, setLoadingMarkets] = useState(false);
   const [marketSearch, setMarketSearch] = useState('');
   const [showMarketModal, setShowMarketModal] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const dimensions = getResponsiveDimensions();
 
   useEffect(() => {
@@ -173,6 +176,73 @@ export default function ProfileScreen() {
     setIsEditModalVisible(false);
   };
 
+  const handleUploadProfilePhoto = async () => {
+    if (!user) return;
+
+    try {
+      setUploadingPhoto(true);
+
+      if (Platform.OS !== 'web') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Permission needed', 'Please allow photo library access to upload your profile picture.');
+          return;
+        }
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+
+      const asset = result.assets[0];
+      const response = await fetch(asset.uri);
+      const blob = await response.blob();
+      const ext = asset.fileName?.split('.').pop()?.toLowerCase() || 'jpg';
+      const mimeType = asset.mimeType || (ext === 'png' ? 'image/png' : 'image/jpeg');
+      const filePath = `profile-images/${user.id}/avatar_${Date.now()}.${ext === 'png' ? 'png' : 'jpg'}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('listing-images')
+        .upload(filePath, blob, {
+          contentType: mimeType,
+          upsert: true,
+        });
+
+      if (uploadError) {
+        console.error('Profile photo upload error:', uploadError);
+        Alert.alert('Error', 'Failed to upload profile photo. Please try again.');
+        return;
+      }
+
+      const { data } = supabase.storage.from('listing-images').getPublicUrl(filePath);
+      const avatarUrl = data.publicUrl;
+
+      const { error: updateError } = await supabase
+        .from('user_profiles')
+        .update({ avatar_url: avatarUrl })
+        .eq('id', user.id);
+
+      if (updateError) {
+        console.error('Profile avatar update error:', updateError);
+        Alert.alert('Error', 'Photo uploaded but profile update failed. Please try again.');
+        return;
+      }
+
+      await refreshUser();
+      Alert.alert('Success', 'Profile photo updated successfully!');
+    } catch (error) {
+      console.error('Error uploading profile photo:', error);
+      Alert.alert('Error', 'Could not update profile photo. Please try again.');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
   // Show loading state while checking authentication
   if (isLoading) {
     return (
@@ -206,17 +276,36 @@ export default function ProfileScreen() {
           {/* Profile Card */}
           <View style={styles.profileCard}>
             <View style={styles.avatarContainer}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {user.name.split(' ').map(n => n[0]).join('')}
-                </Text>
-              </View>
+              {user.avatar ? (
+                <Image source={{ uri: user.avatar }} style={styles.avatarImage} />
+              ) : (
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>
+                    {user.name.split(' ').map(n => n[0]).join('')}
+                  </Text>
+                </View>
+              )}
               {user.verified && (
                 <View style={styles.verifiedBadge}>
                   <Ionicons name="checkmark" size={16} color="white" />
                 </View>
               )}
             </View>
+
+            <TouchableOpacity
+              style={[styles.photoButton, uploadingPhoto && styles.photoButtonDisabled]}
+              onPress={handleUploadProfilePhoto}
+              disabled={uploadingPhoto}
+            >
+              {uploadingPhoto ? (
+                <ActivityIndicator size="small" color={Colors.light.primary} />
+              ) : (
+                <Ionicons name="camera" size={14} color={Colors.light.primary} />
+              )}
+              <Text style={styles.photoButtonText}>
+                {uploadingPhoto ? 'Uploading...' : user.avatar ? 'Update Photo' : 'Upload Photo'}
+              </Text>
+            </TouchableOpacity>
             
             <Text style={styles.userName}>{user.name}</Text>
             <Text style={styles.userEmail}>{user.email}</Text>
@@ -594,10 +683,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  avatarImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
   avatarText: {
     fontSize: 32,
     fontWeight: 'bold',
     color: 'white',
+    fontFamily: 'System',
+  },
+  photoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.light.primary,
+    backgroundColor: Colors.light.primary + '10',
+    marginBottom: 12,
+    gap: 6,
+  },
+  photoButtonDisabled: {
+    opacity: 0.7,
+  },
+  photoButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.light.primary,
     fontFamily: 'System',
   },
   verifiedBadge: {
