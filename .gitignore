@@ -25,3 +25,6 @@ web-build/
 
 expo-env.d.ts
 # @end expo-cli
+
+# ML Models (local only)
+models/
