@@ -122,3 +122,32 @@ The AI prediction tab now calls a Supabase Edge Function (`ai-price-prediction`)
 Important:
 - Never store `GEMINI_API_KEY` in Expo public env vars.
 - Keep API keys only in Supabase secrets or another secure backend secret store.
+
+Local model server (optional)
+
+If you prefer to host the trained `.pkl` models locally and have the Supabase function call your local model server, follow these steps:
+
+1. Start the model server (Windows PowerShell):
+
+```powershell
+cd model_server
+.\setup.ps1
+.\run_server.ps1
+```
+
+2. Configure the Supabase function for local testing:
+
+- Copy `supabase/functions/.env.example` to your local env or set the `MODEL_SERVER_URL` env var to `http://localhost:8000`.
+- Deploy (or run) the Supabase function that will call the model server; when `MODEL_SERVER_URL` is set, the function sends prediction requests to your local server.
+- The AI prediction dropdowns now come from the local model catalog only, so the crop and mandi lists stay aligned with your `models/` folder.
+
+3. Run a quick test (in another PowerShell window):
+
+```powershell
+cd model_server
+.\run_test.ps1
+```
+
+Notes:
+- The model server looks for `.pkl` files inside the repository `models/` directory. Ensure your trained models are present under `models/`.
+- For best results, pass `recentPrices` from the client to aid the model server's prediction input.

@@ -1,0 +1,65 @@
+﻿{
+    "predictions":  [
+                        {
+                            "dayLabel":  "Tomorrow",
+                            "price":  2792.0
+                        },
+                        {
+                            "dayLabel":  "Day 2",
+                            "price":  2802.0
+                        },
+                        {
+                            "dayLabel":  "Day 3",
+                            "price":  2812.0
+                        },
+                        {
+                            "dayLabel":  "Day 4",
+                            "price":  2822.0
+                        },
+                        {
+                            "dayLabel":  "Day 5",
+                            "price":  2832.0
+                        },
+                        {
+                            "dayLabel":  "Day 6",
+                            "price":  2842.0
+                        },
+                        {
+                            "dayLabel":  "Day 7",
+                            "price":  2852.0
+                        }
+                    ],
+    "baseMandi":  "Azadpur_APMC",
+    "nearbyMandis":  [
+                         {
+                             "name":  "Nearby APMC 1",
+                             "distanceKm":  20,
+                             "targetPrice":  2652.0,
+                             "extraPerQtl":  -140.0,
+                             "netProfit":  -2400.0,
+                             "worthIt":  false,
+                             "reason":  "Calculated from model baseline"
+                         },
+                         {
+                             "name":  "Nearby APMC 2",
+                             "distanceKm":  35,
+                             "targetPrice":  2792.0,
+                             "extraPerQtl":  0.0,
+                             "netProfit":  -1750.0,
+                             "worthIt":  false,
+                             "reason":  "Calculated from model baseline"
+                         },
+                         {
+                             "name":  "Nearby APMC 3",
+                             "distanceKm":  50,
+                             "targetPrice":  2931.0,
+                             "extraPerQtl":  139.0,
+                             "netProfit":  -1110.0,
+                             "worthIt":  false,
+                             "reason":  "Calculated from model baseline"
+                         }
+                     ],
+    "model":  "Azadpur_APMC.pkl",
+    "confidence":  "medium",
+    "summary":  "Predictions generated from local .pkl model"
+}

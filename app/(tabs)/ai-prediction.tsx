@@ -1,10 +1,9 @@
 import { Colors } from '@/constants/theme';
 import { useUser } from '@/contexts/UserContext';
-import { AiMandiCandidate, AiNearbyMandi, Horizon } from '@/utils/aiPrediction';
+import { AiMandiCandidate, AiNearbyMandi, fetchRecentPrices, Horizon, predictPrices } from '@/utils/aiPrediction';
+import { fetchModelCatalog, normalizeModelKey, type NormalizedModelCatalog } from '@/utils/modelCatalog';
 import { getResponsiveDimensions, isDesktop } from '@/utils/responsive';
-import { fetchAllStateMarkets } from '@/utils/stateMarketImport';
 import { supabase } from '@/utils/supabaseClient';
-import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
@@ -87,10 +86,9 @@ export default function AiPredictionScreen() {
   const { user } = useUser();
   const dimensions = getResponsiveDimensions();
 
-  const [fruits, setFruits] = useState<string[]>([]);
-  const [isLoadingFruits, setIsLoadingFruits] = useState<boolean>(true);
   const [fruitModalVisible, setFruitModalVisible] = useState(false);
   const [selectedFruit, setSelectedFruit] = useState<string>('');
+  const [selectedFruitFolder, setSelectedFruitFolder] = useState<string>('');
   const [horizon, setHorizon] = useState<Horizon>('1D');
   const [predictions, setPredictions] = useState<PredictionPoint[]>([]);
   const [isLoadingPrediction, setIsLoadingPrediction] = useState(false);
@@ -105,101 +103,94 @@ export default function AiPredictionScreen() {
   const [historyRows, setHistoryRows] = useState<PredictionHistoryRow[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState('');
-  
-  // Mandi selection state
-  const [markets, setMarkets] = useState<{ market_name: string; state_name: string }[]>([]);
-  const [loadingMarkets, setLoadingMarkets] = useState(false);
-  const [selectedMandi, setSelectedMandi] = useState<string>(user?.market || '');
+  const [selectedMandi, setSelectedMandi] = useState<string>('');
   const [mandiModalVisible, setMandiModalVisible] = useState(false);
   const [mandiSearch, setMandiSearch] = useState('');
+  const [modelCatalog, setModelCatalog] = useState<NormalizedModelCatalog | null>(null);
 
-  const loadFruits = async () => {
+  const loadModelCatalog = async () => {
     try {
-      setIsLoadingFruits(true);
-      let lastError: unknown;
-
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        const { data, error } = await supabase
-          .from('fruit_commodities')
-          .select('commodity_name')
-          .order('commodity_name', { ascending: true });
-
-        if (!error) {
-          const names =
-            (data ?? [])
-              .map((row: any) => row.commodity_name as string | null)
-              .filter((n): n is string => !!n) ?? [];
-
-          setFruits(names);
-          if (names.length > 0) {
-            setSelectedFruit((prev) => prev || names[0]);
-          }
-          return;
-        }
-
-        lastError = error;
-        if (attempt < 3) {
-          await wait(250 * Math.pow(2, attempt - 1));
-        }
-      }
-
-      console.error('Error loading fruits for AI Prediction:', lastError);
-      setFruits([]);
-    } finally {
-      setIsLoadingFruits(false);
+      const catalog = await fetchModelCatalog();
+      setModelCatalog(catalog);
+    } catch (error) {
+      console.error('Error loading model catalog:', error);
+      setModelCatalog(null);
     }
   };
 
-  const loadMarkets = async () => {
-    try {
-      setLoadingMarkets(true);
-      const data = await fetchAllStateMarkets();
-      setMarkets(data);
-    } catch (err) {
-      console.error('Error loading markets from state_market_import:', err);
-      setMarkets([]);
-    } finally {
-      setLoadingMarkets(false);
-    }
-  };
-
-  // Load fruits from Supabase (fruit_commodities)
   useEffect(() => {
-    loadFruits();
+    loadModelCatalog();
   }, []);
 
-  // Load markets from state_market_import (full list, paginated past 1000 rows)
-  useEffect(() => {
-    loadMarkets();
-  }, []);
-
-  // Soft refresh background data periodically so users don't need manual reload.
   useEffect(() => {
     const intervalId = setInterval(() => {
-      loadFruits();
-      loadMarkets();
+      loadModelCatalog();
     }, 60000);
 
     return () => clearInterval(intervalId);
   }, []);
 
-  // Set initial mandi from user profile
   useEffect(() => {
-    if (user?.market) {
-      setSelectedMandi((prev) => prev || user.market);
+    if (!modelCatalog || modelCatalog.supportedCrops.length === 0) {
+      return;
     }
-  }, [user]);
+
+    const firstSupportedCropFolder = modelCatalog.supportedCropFolders[0] || '';
+    const cropIsSupported = selectedFruitFolder
+      && modelCatalog.supportedCropFolders.some((folder) => normalizeModelKey(folder) === normalizeModelKey(selectedFruitFolder));
+
+    if (!selectedFruit || !cropIsSupported) {
+      setSelectedFruitFolder(firstSupportedCropFolder);
+      setSelectedFruit(firstSupportedCropFolder);
+    }
+  }, [modelCatalog, selectedFruit, selectedFruitFolder]);
+
+  const supportedMarketOptions = useMemo(() => {
+    return modelCatalog?.supportedMandisByCrop?.[selectedFruitFolder] ?? [];
+  }, [modelCatalog, selectedFruitFolder]);
+
+  const availableMarketOptions = useMemo(() => {
+    return supportedMarketOptions;
+  }, [supportedMarketOptions]);
+
+  useEffect(() => {
+    if (!modelCatalog || !selectedFruitFolder) {
+      return;
+    }
+
+    const supportedMandis = modelCatalog.supportedMandisByCrop?.[selectedFruitFolder] ?? [];
+    if (supportedMandis.length === 0) {
+      if (selectedMandi) {
+        setSelectedMandi('');
+      }
+      return;
+    }
+
+    const selectedKey = normalizeModelKey(selectedMandi);
+    const isSupported = supportedMandis.some((mandi) => normalizeModelKey(mandi) === selectedKey);
+    if (selectedMandi && !isSupported) {
+      setSelectedMandi('');
+    }
+  }, [modelCatalog, selectedFruitFolder, selectedMandi]);
 
   const candidateMandis: AiMandiCandidate[] = useMemo(
-    () => markets
-      .filter((market) => market.market_name !== selectedMandi)
-      .slice(0, 25)
-      .map((market) => ({
-        name: market.market_name,
-        stateName: market.state_name || undefined,
-      })),
-    [markets, selectedMandi],
+    () => {
+      const supportedMandis = modelCatalog?.supportedMandisByCrop?.[selectedFruitFolder] ?? [];
+
+      return supportedMandis
+        .filter((mandi) => normalizeModelKey(mandi) !== normalizeModelKey(selectedMandi))
+        .slice(0, 25)
+        .map((mandi) => ({
+          name: mandi,
+          stateName: undefined,
+        }));
+    },
+    [modelCatalog, selectedFruitFolder, selectedMandi],
   );
+
+  const supportedCropNames = useMemo(() => {
+    return modelCatalog?.supportedCrops ?? [];
+  }, [modelCatalog]);
 
   const applyPredictionPayload = (
     payload: any,
@@ -294,6 +285,7 @@ export default function AiPredictionScreen() {
     }
 
     setSelectedFruit(item.crop);
+    setSelectedFruitFolder(item.crop);
     setSelectedMandi(item.mandi);
     setHorizon(item.horizon);
     setQueueStatus('completed');
@@ -330,53 +322,36 @@ export default function AiPredictionScreen() {
     setQueueStatus('pending');
 
     try {
-      const candidateListText = candidateMandis
-        .slice(0, 25)
-        .map((item, index) => `${index + 1}. ${item.name}${item.stateName ? ` (${item.stateName})` : ''}`)
-        .join('\n');
+      const recent = await fetchRecentPrices(selectedFruit, selectedMandi, 7);
+      const result = await predictPrices({
+        crop: selectedFruit,
+        mandi: selectedMandi,
+        horizon,
+        candidateMandis,
+        recentPrices: recent ?? undefined,
+      });
 
-      const manualPrompt =
-        `Generate crop intelligence for crop '${selectedFruit}' and mandi '${selectedMandi}'.\n` +
-        `Horizon: ${horizon}.\n` +
-        'Return ONLY strict JSON with keys: predictions, baseMandi, nearbyMandis, confidence, summary, model.\n' +
-        'Use INR per quintal values and realistic volatility.\n' +
-        'For nearbyMandis use exactly 3 names from candidate list and include distanceKm, targetPrice, extraPerQtl, netProfit, worthIt, reason.\n' +
-        (candidateListText ? `Candidate mandis:\n${candidateListText}` : '');
-
-      const { data, error } = await supabase
-        .from('ai_prediction_manual_requests')
-        .insert({
-          crop: selectedFruit,
-          mandi: selectedMandi,
-          horizon,
-          candidate_mandis: candidateMandis,
-          prompt: manualPrompt,
-          status: 'pending',
-          updated_at: new Date().toISOString(),
-        })
-        .select('id')
-        .single();
-
-      if (error || !data?.id) {
-        throw new Error(error?.message || 'Failed to create manual AI request');
+      const ok = applyPredictionPayload(result, horizon, selectedMandi);
+      if (!ok) {
+        throw new Error('Prediction payload invalid');
       }
 
-      setActiveRequestId(data.id);
-      setPredictions([]);
-      setNearbyMandis([]);
-      setPredictionSummary('');
-      setPredictionModel('manual-queue');
-      setBaseMandiName(selectedMandi || user?.market || 'Your mandi');
+      setQueueStatus('completed');
+      setIsLoadingPrediction(false);
+      setActiveRequestId('');
+      // refresh history
+      loadPredictionHistory();
     } catch (error) {
       setQueueStatus('failed');
-      setPredictionError(error instanceof Error ? error.message : 'Failed to queue manual request');
+      setPredictionError(error instanceof Error ? error.message : 'Prediction failed');
       const fallback = buildLocalFallbackPredictions(selectedFruit);
       const fallbackNearby = buildLocalFallbackNearbyMandis(fallback[0].price, candidateMandis);
       setPredictions(horizon === '1D' ? fallback.slice(0, 1) : fallback);
-      setPredictionSummary('Using fallback estimate because request could not be queued.');
+      setPredictionSummary('Using fallback estimate because prediction failed.');
       setPredictionModel('local-fallback');
       setBaseMandiName(selectedMandi || user?.market || 'Your mandi');
       setNearbyMandis(fallbackNearby);
+      setIsLoadingPrediction(false);
     }
   };
 
@@ -440,15 +415,12 @@ export default function AiPredictionScreen() {
     loadPredictionHistory();
   }, [loadPredictionHistory, screenMode]);
 
-  const filteredMarkets = markets.filter((m) => {
-    const label = `${m.market_name}${m.state_name ? ` (${m.state_name})` : ''}`;
+  const filteredMarkets = availableMarketOptions.filter((m) => {
     if (!mandiSearch.trim()) return true;
-    return label.toLowerCase().includes(mandiSearch.toLowerCase());
+    return String(m).toLowerCase().includes(mandiSearch.toLowerCase());
   });
 
-  const marketOptionsList = filteredMarkets.map(
-    (m) => `${m.market_name}${m.state_name ? ` (${m.state_name})` : ''}`
-  );
+  const marketOptionsList = filteredMarkets.map((m) => String(m));
 
   const visiblePredictions = predictions;
   const maxPrice = predictions.length > 0 ? Math.max(...predictions.map((p) => p.price)) : 0;
@@ -502,9 +474,7 @@ export default function AiPredictionScreen() {
                 </TouchableOpacity>
               </View>
               <Text style={styles.cardSubtitle}>
-                Showing recent completed predictions
-                {selectedFruit ? ` for ${selectedFruit}` : ''}
-                {selectedMandi ? ` in ${selectedMandi}` : ''}.
+                {`Showing recent completed predictions${selectedFruit ? ` for ${selectedFruit}` : ''}${selectedMandi ? ` in ${selectedMandi}` : ''}.`}
               </Text>
 
               {isLoadingHistory && (
@@ -548,7 +518,7 @@ export default function AiPredictionScreen() {
                     </View>
                     <View style={{ alignItems: 'flex-end', marginLeft: 10 }}>
                       <Text style={styles.historyPriceText}>₹{topPrice}/qtl</Text>
-                      <Ionicons name="arrow-forward-circle-outline" size={18} color={Colors.light.primary} />
+                      <Text style={styles.inlineArrowIcon}>→</Text>
                     </View>
                   </TouchableOpacity>
                 );
@@ -563,54 +533,42 @@ export default function AiPredictionScreen() {
             <TouchableOpacity
               style={styles.dropdown}
               onPress={() => {
-                if (!isLoadingFruits && fruits.length > 0) {
+                if (supportedCropNames.length > 0) {
                   setFruitModalVisible(true);
                 }
               }}
-              disabled={isLoadingFruits || fruits.length === 0}
+              disabled={supportedCropNames.length === 0}
             >
               <Text
                 style={[
                   styles.dropdownText,
-                  (!selectedFruit || fruits.length === 0) && styles.dropdownPlaceholder,
+                  (!selectedFruit || supportedCropNames.length === 0) && styles.dropdownPlaceholder,
                 ]}
               >
-                {isLoadingFruits
-                  ? 'Loading crops...'
-                  : selectedFruit || 'Select crop'}
+                {selectedFruit || 'Select crop'}
               </Text>
-              <Ionicons
-                name="chevron-down"
-                size={18}
-                color={Colors.light.icon}
-              />
+              <Text style={styles.dropdownChevron}>⌄</Text>
             </TouchableOpacity>
 
             <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Mandi / Market Name</Text>
             <TouchableOpacity
               style={styles.dropdown}
               onPress={() => {
-                if (!loadingMarkets && markets.length > 0) {
+                if (availableMarketOptions.length > 0) {
                   setMandiModalVisible(true);
                 }
               }}
-              disabled={loadingMarkets || markets.length === 0}
+              disabled={availableMarketOptions.length === 0}
             >
               <Text
                 style={[
                   styles.dropdownText,
-                  (!selectedMandi || markets.length === 0) && styles.dropdownPlaceholder,
+                  (!selectedMandi || availableMarketOptions.length === 0) && styles.dropdownPlaceholder,
                 ]}
               >
-                {loadingMarkets
-                  ? 'Loading mandis...'
-                  : selectedMandi || 'Select mandi / market'}
+                {selectedMandi || 'Select mandi / market'}
               </Text>
-              <Ionicons
-                name="chevron-down"
-                size={18}
-                color={Colors.light.icon}
-              />
+              <Text style={styles.dropdownChevron}>⌄</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -729,14 +687,14 @@ export default function AiPredictionScreen() {
 
             <View style={styles.baseMandiCard}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                <Ionicons name="home" size={20} color={Colors.light.primary} />
+                <Text style={styles.inlineIcon}>⌂</Text>
                 <Text style={styles.baseMandiLabel}>Your Mandi</Text>
               </View>
               <View style={styles.mandiDropdown}>
                 <Text
                   style={[
                     styles.mandiDropdownText,
-                    (!selectedMandi || markets.length === 0) && styles.mandiDropdownPlaceholder,
+                    (!selectedMandi || availableMarketOptions.length === 0) && styles.mandiDropdownPlaceholder,
                   ]}
                 >
                   {selectedMandi || 'Select mandi / market from inputs above'}
@@ -744,9 +702,7 @@ export default function AiPredictionScreen() {
               </View>
               {selectedMandi && (
                 <Text style={styles.baseMandiPrice}>
-                  {baseMandiName ? `${baseMandiName} | ` : ''}
-                  Tomorrow&apos;s predicted price: 
-                  <Text style={{ fontWeight: '700' }}>₹{basePrice}/qtl</Text>
+                  {`${baseMandiName ? `${baseMandiName} | ` : ''}Tomorrow's predicted price: ₹${basePrice}/qtl`}
                 </Text>
               )}
             </View>
@@ -763,7 +719,7 @@ export default function AiPredictionScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.nearbyName}>{m.name}</Text>
                     <View style={styles.nearbyMetaRow}>
-                      <Ionicons name="navigate" size={14} color={Colors.light.icon} />
+                      <Text style={styles.inlineMetaIcon}>↗</Text>
                       <Text style={styles.nearbyMetaText}>{m.distanceKm} km away</Text>
                     </View>
                   </View>
@@ -812,35 +768,32 @@ export default function AiPredictionScreen() {
             <View style={styles.modalSheetHeader}>
               <Text style={styles.modalSheetTitle}>Select Crop</Text>
               <TouchableOpacity onPress={() => setFruitModalVisible(false)}>
-                <Ionicons name="close" size={22} color={Colors.light.icon} />
+                <Text style={styles.closeGlyph}>×</Text>
               </TouchableOpacity>
             </View>
-            {isLoadingFruits ? (
+            {supportedCropNames.length === 0 ? (
               <View style={styles.modalSheetBody}>
-                <ActivityIndicator size="small" color={Colors.light.primary} />
-                <Text style={styles.infoText}>Loading crops...</Text>
+                <Text style={styles.infoText}>No crops found in the local model catalog.</Text>
               </View>
             ) : (
               <ScrollView style={styles.modalSheetBody}>
-                {fruits.map(name => (
-                  <TouchableOpacity
-                    key={name}
-                    style={styles.modalItem}
-                    onPress={() => {
-                      setSelectedFruit(name);
-                      setFruitModalVisible(false);
-                    }}
-                  >
-                    <Text style={styles.modalItemText}>{name}</Text>
-                    {selectedFruit === name && (
-                      <Ionicons
-                        name="checkmark"
-                        size={20}
-                        color={Colors.light.primary}
-                      />
-                    )}
-                  </TouchableOpacity>
-                ))}
+                {supportedCropNames.map((name) => {
+                  const cropFolder = name;
+                  return (
+                    <TouchableOpacity
+                      key={name}
+                      style={styles.modalItem}
+                      onPress={() => {
+                        setSelectedFruit(name);
+                        setSelectedFruitFolder(cropFolder);
+                        setFruitModalVisible(false);
+                      }}
+                    >
+                      <Text style={styles.modalItemText}>{name}</Text>
+                      {selectedFruit === name && <Text style={styles.inlineCheckIcon}>✓</Text>}
+                    </TouchableOpacity>
+                  );
+                })}
               </ScrollView>
             )}
           </View>
@@ -859,13 +812,12 @@ export default function AiPredictionScreen() {
             <View style={styles.modalSheetHeader}>
               <Text style={styles.modalSheetTitle}>Select Mandi / Market</Text>
               <TouchableOpacity onPress={() => setMandiModalVisible(false)}>
-                <Ionicons name="close" size={22} color={Colors.light.icon} />
+                <Text style={styles.closeGlyph}>×</Text>
               </TouchableOpacity>
             </View>
-            {loadingMarkets ? (
+            {availableMarketOptions.length === 0 ? (
               <View style={styles.modalSheetBody}>
-                <ActivityIndicator size="small" color={Colors.light.primary} />
-                <Text style={styles.infoText}>Loading mandis...</Text>
+                <Text style={styles.infoText}>No mandis found for this crop model.</Text>
               </View>
             ) : (
               <ScrollView style={styles.modalSheetBody} keyboardShouldPersistTaps="handled">
@@ -883,12 +835,7 @@ export default function AiPredictionScreen() {
                     marginBottom: 8,
                   }}
                 >
-                  <Ionicons
-                    name="search"
-                    size={18}
-                    color={Colors.light.icon}
-                    style={{ marginRight: 6 }}
-                  />
+                  <Text style={styles.inlineSearchIcon}>⌕</Text>
                   <TextInput
                     style={{
                       flex: 1,
@@ -903,8 +850,7 @@ export default function AiPredictionScreen() {
                     onChangeText={setMandiSearch}
                   />
                 </View>
-                {marketOptionsList.map((item, idx) => {
-                  const marketName = item.split(' (')[0];
+                {marketOptionsList.map((marketName, idx) => {
                   return (
                     <TouchableOpacity
                       key={idx}
@@ -914,14 +860,8 @@ export default function AiPredictionScreen() {
                         setMandiModalVisible(false);
                       }}
                     >
-                      <Text style={styles.modalItemText}>{item}</Text>
-                      {selectedMandi === marketName && (
-                        <Ionicons
-                          name="checkmark"
-                          size={20}
-                          color={Colors.light.primary}
-                        />
-                      )}
+                      <Text style={styles.modalItemText}>{marketName}</Text>
+                      {selectedMandi === marketName && <Text style={styles.inlineCheckIcon}>✓</Text>}
                     </TouchableOpacity>
                   );
                 })}
@@ -1071,6 +1011,47 @@ const styles = StyleSheet.create({
   },
   dropdownPlaceholder: {
     color: Colors.light.icon,
+  },
+  dropdownChevron: {
+    color: Colors.light.icon,
+    fontSize: 18,
+    marginLeft: 10,
+    fontWeight: '700',
+  },
+  inlineIcon: {
+    color: Colors.light.primary,
+    fontSize: 18,
+    fontWeight: '700',
+    marginRight: 8,
+  },
+  inlineMetaIcon: {
+    color: Colors.light.icon,
+    fontSize: 13,
+    fontWeight: '700',
+    marginRight: 6,
+  },
+  inlineSearchIcon: {
+    color: Colors.light.icon,
+    fontSize: 16,
+    fontWeight: '700',
+    marginRight: 6,
+  },
+  inlineCheckIcon: {
+    color: Colors.light.primary,
+    fontSize: 18,
+    fontWeight: '700',
+    marginLeft: 8,
+  },
+  inlineArrowIcon: {
+    color: Colors.light.primary,
+    fontSize: 18,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  closeGlyph: {
+    color: Colors.light.icon,
+    fontSize: 22,
+    fontWeight: '700',
   },
   checkButton: {
     marginTop: 14,
