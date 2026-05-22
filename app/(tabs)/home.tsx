@@ -10,6 +10,7 @@ import { supabase } from '@/utils/supabaseClient';
 
 export default function HomeScreen() {
   const { user } = useUser();
+  const isFarmer = user?.userType === 'Farmer';
   const isTrader = user?.userType === 'Trader';
   const { containerMaxWidth } = getResponsiveDimensions();
   const displayName = user?.name?.trim() || 'User';
@@ -105,6 +106,22 @@ export default function HomeScreen() {
   }
   const [ongoingBids, setOngoingBids] = useState<OngoingBid[]>([]);
   const [loadingOngoingBids, setLoadingOngoingBids] = useState(false);
+
+  interface ReceivedOffer {
+    id: string;
+    listingId: string;
+    produce: string;
+    market: string;
+    buyerName: string;
+    quantity: number;
+    pricePerQuintal: number;
+    totalAmount: number;
+    status: string;
+    createdAt: string;
+  }
+
+  const [receivedOffers, setReceivedOffers] = useState<ReceivedOffer[]>([]);
+  const [loadingReceivedOffers, setLoadingReceivedOffers] = useState(false);
 
   // Leaderboard modal (bids on a listing)
   const [showLeaderboardModal, setShowLeaderboardModal] = useState(false);
@@ -220,11 +237,85 @@ export default function HomeScreen() {
     }
   }, [user?.id, isTrader]);
 
+  const loadReceivedOffers = useCallback(async () => {
+    if (!user?.id || !isFarmer) {
+      setReceivedOffers([]);
+      return;
+    }
+
+    setLoadingReceivedOffers(true);
+    try {
+      const { data: myListings, error: listingsError } = await supabase
+        .from('listings')
+        .select('id, produce, market')
+        .eq('seller_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (listingsError) {
+        console.error('Error loading farmer listings for offers:', listingsError);
+        setReceivedOffers([]);
+        return;
+      }
+
+      const listingIds = (myListings ?? []).map((listing: any) => listing.id);
+      if (listingIds.length === 0) {
+        setReceivedOffers([]);
+        return;
+      }
+
+      const listingMap = new Map<string, { produce: string; market: string }>();
+      (myListings ?? []).forEach((listing: any) => {
+        listingMap.set(listing.id, {
+          produce: listing.produce ?? 'Listing',
+          market: listing.market ?? '',
+        });
+      });
+
+      const { data: offersData, error } = await supabase
+        .from('listing_offers')
+        .select('id, listing_id, buyer_name, quantity, price_per_quintal, total_amount, status, created_at')
+        .in('listing_id', listingIds)
+        .order('created_at', { ascending: false })
+        .limit(8);
+
+      if (error) {
+        console.error('Error loading received offers:', error);
+        setReceivedOffers([]);
+        return;
+      }
+
+      setReceivedOffers((offersData ?? []).map((row: any) => {
+        const listing = listingMap.get(row.listing_id);
+        return {
+          id: row.id,
+          listingId: row.listing_id,
+          produce: listing?.produce ?? 'Listing',
+          market: listing?.market ?? '',
+          buyerName: row.buyer_name ?? 'Trader',
+          quantity: Number(row.quantity ?? 0),
+          pricePerQuintal: Number(row.price_per_quintal ?? 0),
+          totalAmount: Number(row.total_amount ?? 0),
+          status: row.status ?? 'pending',
+          createdAt: row.created_at ?? '',
+        };
+      }));
+    } finally {
+      setLoadingReceivedOffers(false);
+    }
+  }, [user?.id, isFarmer]);
+
   useEffect(() => {
     if (isTrader && user?.id) {
       loadOngoingBids();
     }
   }, [isTrader, user?.id, loadOngoingBids]);
+
+  useEffect(() => {
+    if (isFarmer && user?.id) {
+      loadReceivedOffers();
+    }
+  }, [isFarmer, user?.id, loadReceivedOffers]);
 
   // Removed sparkline chart per request
 
@@ -322,27 +413,41 @@ export default function HomeScreen() {
             justifyContent: 'center',
           }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', maxWidth: '58%' }}>
-            {user?.avatar ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: 72,
+              right: 72,
+              top: 0,
+              bottom: 0,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Text style={{ fontSize: 24, fontWeight: '800', color: '#19696c' }}>Mulsetu</Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', maxWidth: '48%' }}>
+            <View
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 19,
+                marginRight: 10,
+                backgroundColor: '#ffffff',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: 1,
+                borderColor: '#d1d5db',
+              }}
+            >
               <Image
-                source={{ uri: user.avatar }}
-                style={{ width: 38, height: 38, borderRadius: 19, marginRight: 10, borderWidth: 1, borderColor: '#d1d5db' }}
+                source={require('../../assets/images/mulsetu_logo.png')}
+                resizeMode="contain"
+                style={{ width: 26, height: 26 }}
               />
-            ) : (
-              <View
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  marginRight: 10,
-                  backgroundColor: '#19696c',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '800' }}>{userInitials || 'U'}</Text>
-              </View>
-            )}
+            </View>
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }} numberOfLines={1}>
                 {displayName}
@@ -379,27 +484,6 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
 
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: 0,
-              bottom: 0,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Image
-                source={require('../../assets/images/mulsetu_logo.png')}
-                resizeMode="contain"
-                style={{ width: 34, height: 34, marginRight: 8 }}
-              />
-              <Text style={{ fontSize: 24, fontWeight: '800', color: '#19696c' }}>Mulsetu</Text>
-            </View>
-          </View>
         </View>
 
         {/* Highlight slider: live mandi prices with fruit images and names */}
@@ -609,9 +693,11 @@ export default function HomeScreen() {
                 borderColor: 'rgba(255, 255, 255, 0.2)',
               }}
               activeOpacity={0.8}
-              onPress={() => router.push('/(tabs)/buy')}
+              onPress={() => router.push(isFarmer ? '/(tabs)/sell' : '/(tabs)/buy')}
             >
-              <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700' }} numberOfLines={1}>Buy Crop</Text>
+              <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700' }} numberOfLines={1}>
+                {isFarmer ? 'Sell Crop' : 'Buy Crop'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -760,6 +846,105 @@ export default function HomeScreen() {
                       <Text style={{ fontSize: 14, fontWeight: '600', color: '#ffffff' }}>Update bid</Text>
                     </TouchableOpacity>
                     </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        )}
+
+        {/* Farmer: received trader offers */}
+        {isFarmer && (
+          <View style={{ marginTop: 28, paddingHorizontal: 16, marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: '#19696c' }}>Offers Received</Text>
+              <TouchableOpacity
+                onPress={() => router.push('/(tabs)/sell')}
+                activeOpacity={0.8}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#60941a' }}>View all</Text>
+              </TouchableOpacity>
+            </View>
+            {loadingReceivedOffers ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color="#19696c" />
+                <Text style={{ marginTop: 8, fontSize: 13, color: '#6b7280' }}>Loading offers…</Text>
+              </View>
+            ) : receivedOffers.length === 0 ? (
+              <View
+                style={{
+                  backgroundColor: '#f9fafb',
+                  borderRadius: 16,
+                  padding: 20,
+                  borderWidth: 1,
+                  borderColor: '#e5e7eb',
+                }}
+              >
+                <Text style={{ fontSize: 15, color: '#6b7280', textAlign: 'center' }}>
+                  No trader offers yet. New offers on your listings will appear here.
+                </Text>
+              </View>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingRight: 16 }}
+                snapToInterval={296}
+                snapToAlignment="start"
+                decelerationRate="fast"
+              >
+                {receivedOffers.map((offer) => (
+                  <TouchableOpacity
+                    key={offer.id}
+                    onPress={() => router.push('/(tabs)/sell')}
+                    activeOpacity={0.8}
+                    style={{
+                      width: 284,
+                      marginRight: 12,
+                      backgroundColor: '#ffffff',
+                      borderRadius: 16,
+                      padding: 14,
+                      borderWidth: 1,
+                      borderColor: '#e5e7eb',
+                      elevation: 2,
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 1 },
+                      shadowOpacity: 0.06,
+                      shadowRadius: 4,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                      <Text style={{ fontSize: 16, fontWeight: '700', color: '#19696c', flex: 1 }} numberOfLines={1}>
+                        {offer.produce}
+                      </Text>
+                      <View
+                        style={{
+                          backgroundColor: 'rgba(96, 148, 26, 0.15)',
+                          paddingHorizontal: 8,
+                          paddingVertical: 4,
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#60941a', textTransform: 'capitalize' }}>
+                          {offer.status}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 4 }}>Trader: {offer.buyerName}</Text>
+                    {offer.market ? (
+                      <Text style={{ fontSize: 12, color: '#9ca3af', marginBottom: 4 }}>{offer.market}</Text>
+                    ) : null}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f3f4f6' }}>
+                      <Text style={{ fontSize: 13, color: '#374151' }}>
+                        {offer.quantity} qtl × ₹{offer.pricePerQuintal.toLocaleString('en-IN')}/qtl
+                      </Text>
+                      <Text style={{ fontSize: 15, fontWeight: '700', color: '#60941a' }}>
+                        ₹{offer.totalAmount.toLocaleString('en-IN')} total
+                      </Text>
+                    </View>
+                    <Text style={{ marginTop: 10, fontSize: 12, color: '#6b7280' }}>
+                      Open Sell tab to accept or reject this offer.
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
